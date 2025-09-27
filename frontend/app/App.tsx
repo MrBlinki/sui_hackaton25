@@ -65,19 +65,17 @@ export default function App() {
   }, [currentTrack]);
 
   return (
-    <div className="p-4 bg-white text-black">
-      <h1 className="text-xl font-bold">On-Chain Jukebox</h1>
+    <div className="bg-white text-black">
+      {/* <h1 className="text-xl font-bold">On-Chain Jukebox</h1>
 
       {error && <p className="text-red-600">Error: {error}</p>}
       {!error && !currentTrack && <p>Loading…</p>}
-      {currentTrack && <p>Current Track (from chain): {currentTrack}</p>}
+      {currentTrack && <p>Current Track (from chain): {currentTrack}</p>} */}
 
       {/* The audio player; pass the same playlist that contains those titles */}
-      <div className="mt-4">
         <AudioPlayer ref={playerRef} playlist={PLAYLIST} />
-      </div>
 
-      {/* Fallback play button for browsers that block autoplay */}
+      {/* Fallback play button for browsers that block autoplay
       {currentTrack && (
         <button
           className="mt-4 px-4 py-2 rounded bg-black text-white"
@@ -85,7 +83,7 @@ export default function App() {
         >
           ▶ Play on-chain track
         </button>
-      )}
+      )} */}
     </div>
   );
 }
