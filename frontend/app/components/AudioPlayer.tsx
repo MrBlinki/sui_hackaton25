@@ -26,6 +26,8 @@ interface TrackMeta {
 
 interface AudioPlayerProps {
   playlist?: Song[];
+  onTrackSelect?: (title: string) => void;
+  isWaiting?: boolean;
 }
 
 // Methods the parent can call via ref
@@ -41,7 +43,7 @@ const defaultPlaylist: Song[] = [
 ];
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-({ playlist = defaultPlaylist }, ref) => {
+({ playlist = defaultPlaylist, onTrackSelect, isWaiting = false }, ref) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -533,10 +535,25 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             {playlistRef.current.map((song, i) => (
               <div
                 key={i}
-                className="audio-player__list-song"
-                onClick={(e) => { e.stopPropagation(); skipTo(i); setShowPlaylist(false); }}
+                className={`audio-player__list-song ${isWaiting ? 'waiting' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onTrackSelect && !isWaiting) {
+                    // Lancer la transaction blockchain pour changer de track
+                    onTrackSelect(song.title);
+                  } else if (!onTrackSelect) {
+                    // Mode local uniquement (fallback)
+                    skipTo(i);
+                  }
+                  setShowPlaylist(false);
+                }}
+                style={{
+                  opacity: isWaiting ? 0.5 : 1,
+                  cursor: isWaiting ? 'not-allowed' : 'pointer'
+                }}
               >
                 {metaByFile[song.file]?.title || song.title}
+                {isWaiting && i === currentIndex && <span> (⏳ Transaction en cours...)</span>}
               </div>
             ))}
           </div>
