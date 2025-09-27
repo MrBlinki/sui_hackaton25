@@ -233,3 +233,7 @@
 /* Animations */
 @keyframes sk-scaleout { 0% { transform: scale(0); } 100% { transform: scale(1); opacity: 0; } }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+
+/* Show exactly one of the center buttons */
+.audio-player.is-playing .audio-player__play-btn { display: none; }
+.audio-player:not(.is-playing) .audio-player__pause-btn { display: none; }

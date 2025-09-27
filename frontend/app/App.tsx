@@ -121,7 +121,7 @@ export default function App() {
           onSuccess: async ({ digest }) => {
             await suiClient.waitForTransaction({ digest });
             await refetch(); // pull fresh current_track from chain
-            setUiMsg(`Track changed on-chain to "${newTitle}".`);
+            // setUiMsg(`Track changed on-chain to "${newTitle}".`);
             setWaiting(false);
           },
           onError: (err) => {
@@ -162,7 +162,7 @@ export default function App() {
   };
 
   return (
-    <div className="bg-white text-black p-4 space-y-4">
+    <div className="bg-white text-black">
       {/* Search box triggers on-chain change_track; if disconnected,
           we open the connect modal and retry once connected. */}
       <SearchTrack
@@ -175,11 +175,11 @@ export default function App() {
       {error && <div className="text-sm text-red-600">Error: {error.message}</div>}
       {uiMsg && <div className="text-sm">{uiMsg}</div>}
 
-      {fields?.current_track && (
+      {/* {fields?.current_track && (
         <div className="text-sm">
           On-chain current track: <b>{fields.current_track}</b>
         </div>
-      )}
+      )} */}
 
       {/* Local player mirrors the on-chain title list */}
       <AudioPlayer ref={playerRef} playlist={PLAYLIST} />
