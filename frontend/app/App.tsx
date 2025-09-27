@@ -17,8 +17,10 @@ import { useNetworkVariable } from "./networkConfig";
 
 // Local playlist used by the AudioPlayer (titles must match on-chain values)
 const PLAYLIST = [
-  { title: "Horizon", file: "horizon" },
-  { title: "skelet", file: "inside_out" },
+  { title: 'Horizon', file: 'horizon' },
+  { title: 'skelet',  file: 'inside_out' },
+  { title: 'wax',  file: 'wax' },
+  { title: 'atmosphere',  file: 'atmosphere' }
 ];
 
 // ---- Types & helpers to read your Move object ----
