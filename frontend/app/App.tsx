@@ -11,7 +11,6 @@ import {
 } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
 
-import SearchTrack from "./components/SearchTrack";
 import AudioPlayer, { AudioPlayerHandle } from "@/components/AudioPlayer";
 import { useNetworkVariable } from "./networkConfig";
 
@@ -163,14 +162,6 @@ export default function App() {
 
   return (
     <div className="bg-white text-black">
-      {/* Search box triggers on-chain change_track; if disconnected,
-          we open the connect modal and retry once connected. */}
-      <SearchTrack
-        onSearch={handleSearch}
-        placeholder={waiting ? "Submitting…" : "Search track by title…"}
-        className="mb-2"
-      />
-
       {isPending && <div className="text-sm text-muted-foreground">Loading…</div>}
       {error && <div className="text-sm text-red-600">Error: {error.message}</div>}
       {uiMsg && <div className="text-sm">{uiMsg}</div>}
@@ -182,10 +173,19 @@ export default function App() {
       )} */}
 
       {/* Local player mirrors the on-chain title list */}
-      <AudioPlayer ref={playerRef} playlist={PLAYLIST} />
+      <AudioPlayer
+        ref={playerRef}
+        playlist={PLAYLIST}
+        onTrackSelect={handleSearch}
+        isWaiting={waiting}
+      />
 
       {/* Wallet connect modal; lives anywhere under WalletProvider */}
-      <ConnectModal open={showConnect} onOpenChange={setShowConnect} />
+      <ConnectModal
+        trigger={<div />}
+        open={showConnect}
+        onOpenChange={setShowConnect}
+      />
     </div>
   );
 }

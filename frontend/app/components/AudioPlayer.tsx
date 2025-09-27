@@ -26,6 +26,8 @@ interface TrackMeta {
 
 interface AudioPlayerProps {
   playlist?: Song[];
+  onTrackSelect?: (title: string) => void;
+  isWaiting?: boolean;
 }
 
 // Methods the parent can call via ref
@@ -41,7 +43,7 @@ const defaultPlaylist: Song[] = [
 ];
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-({ playlist = defaultPlaylist }, ref) => {
+({ playlist = defaultPlaylist, onTrackSelect, isWaiting = false }, ref) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -62,6 +64,8 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const animationRef = useRef<number>();
   const playlistRef = useRef<Song[]>(playlist);
   const rootRef = useRef<HTMLDivElement>(null);
+  const timerIntervalRef = useRef<NodeJS.Timeout>();
+  const currentTimeRef = useRef<number>(0);
 
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => { playlistRef.current = playlist; }, [playlist]);
@@ -72,15 +76,45 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
   };
 
-  const updateProgress = useCallback(() => {
-    const sound = playlistRef.current[currentIndex]?.howl;
-    if (sound && sound.playing()) {
-      const seek = Number(sound.seek()) || 0;
-      setTimer(formatTime(Math.round(seek)));
-      setProgress(((seek / sound.duration()) * 100) || 0);
-      animationRef.current = requestAnimationFrame(updateProgress);
+  const startTimer = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
     }
+
+    timerIntervalRef.current = setInterval(() => {
+      currentTimeRef.current += 1;
+      setTimer(formatTime(currentTimeRef.current));
+
+      // Calculate progress based on current time and total duration
+      const sound = playlistRef.current[currentIndex]?.howl;
+      if (sound && sound.duration()) {
+        const progressPercent = (currentTimeRef.current / sound.duration()) * 100;
+        setProgress(Math.min(progressPercent, 100));
+
+        // Auto next track when reached end
+        if (currentTimeRef.current >= sound.duration()) {
+          if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = undefined;
+          }
+          // We'll handle auto-next via the onend callback instead
+        }
+      }
+    }, 1000);
   }, [currentIndex]);
+
+  const stopTimer = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = undefined;
+    }
+  }, []);
+
+  const resetTimer = useCallback(() => {
+    currentTimeRef.current = 0;
+    setTimer('0:00');
+    setProgress(0);
+  }, []);
 
   // ---- Metadata extraction (incl. cover art) ----
   const extractMetadata = useCallback(async (mp3Url: string): Promise<TrackMeta> => {
@@ -205,30 +239,48 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       setIsLoading(true);
       sound = data.howl = new Howl({
         src: [`/audio/${data.file}.mp3`],
-        html5: true,
         onplay: () => {
           setDuration(formatTime(Math.round(sound!.duration())));
           setIsPlaying(true);
           setIsLoading(false);
           setShowWave(true);
-          animationRef.current = requestAnimationFrame(updateProgress);
+          startTimer();
         },
-        onload: () => { setIsLoading(false); setShowWave(true); },
-        onend: () => { setIsPlaying(false); setShowWave(false); skip('next'); },
-        onpause: () => { setIsPlaying(false); setShowWave(false); },
-        onstop:  () => { setIsPlaying(false); setShowWave(false); },
-        onseek:  () => { animationRef.current = requestAnimationFrame(updateProgress); }
+        onload: () => {
+          setIsLoading(false);
+          setShowWave(true);
+          setDuration(formatTime(Math.round(sound!.duration())));
+        },
+        onend: () => {
+          setIsPlaying(false);
+          setShowWave(false);
+          stopTimer();
+          resetTimer();
+          skip('next');
+        },
+        onstop: () => {
+          setIsPlaying(false);
+          setShowWave(false);
+          stopTimer();
+          resetTimer();
+        }
       });
     }
 
-    sound.play();
-    setCurrentIndex(playIndex);
-  }, [currentIndex, updateProgress]);
+    // Jukebox mode: only play, no pause
+    if (!sound.playing()) {
+      sound.play();
+      // startTimer() sera appelé par le callback onplay
+    }
 
-  const pause = useCallback(() => {
-    const sound = playlistRef.current[currentIndex]?.howl;
-    if (sound) { sound.pause(); setIsPlaying(false); }
+    // Update duration for already loaded sounds
+    if (sound.state() === 'loaded') {
+      setDuration(formatTime(Math.round(sound.duration())));
+    }
+
+    setCurrentIndex(playIndex);
   }, [currentIndex]);
+
 
   const skip = useCallback((direction: 'next' | 'prev') => {
     let index = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
@@ -240,16 +292,12 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const skipTo = useCallback((index: number) => {
     const currentSound = playlistRef.current[currentIndex]?.howl;
     if (currentSound) currentSound.stop();
+    stopTimer();
+    resetTimer();
     setProgress(0);
     play(index);
-  }, [currentIndex, play]);
+  }, [currentIndex, play, stopTimer, resetTimer]);
 
-  const seek = useCallback((percentage: number) => {
-    const sound = playlistRef.current[currentIndex]?.howl;
-    if (sound && sound.playing()) {
-      sound.seek(sound.duration() * percentage);
-    }
-  }, [currentIndex]);
 
   const handleVolumeChange = useCallback((vol: number) => {
     setVolume(vol);
@@ -259,15 +307,17 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const togglePlaylist = () => setShowPlaylist(!showPlaylist);
   const toggleVolume   = () => setShowVolume(!showVolume);
 
-  const handleWaveformClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const percentage = (e.clientX - rect.left) / rect.width;
-    seek(percentage);
-  };
 
   const handleVolumeClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    const percentage = (e.clientX - rect.left) / rect.width;
+    let percentage = (e.clientX - rect.left) / rect.width;
+
+    // Snap to 0 if very close to the left edge (within 5% of the bar)
+    if (percentage < 0.05) percentage = 0;
+    // Snap to 1 if very close to the right edge (within 5% of the bar)
+    if (percentage > 0.95) percentage = 1;
+
     handleVolumeChange(Math.min(1, Math.max(0, percentage)));
   };
 
@@ -275,6 +325,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   useEffect(() => {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       playlistRef.current.forEach(s => s.howl?.unload());
       createdObjectUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
       createdObjectUrlsRef.current = [];
@@ -452,16 +503,14 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           {!isPlaying && !isLoading && (
             <div className="audio-player__btn audio-player__play-btn" onClick={() => play()} />
           )}
-          {isPlaying && (
-            <div className="audio-player__btn audio-player__pause-btn" onClick={pause} />
-          )}
+          {/* No pause button in jukebox mode - music plays until the end */}
         </div>
         <div className="audio-player__btn audio-player__playlist-btn" onClick={togglePlaylist} />
         <div className="audio-player__btn audio-player__volume-btn"   onClick={toggleVolume} />
       </div>
 
       {/* Progress / Wave */}
-      <div className="audio-player__waveform" ref={waveformRef} onClick={handleWaveformClick}>
+      <div className="audio-player__waveform" ref={waveformRef}>
         {showWave && mounted ? (
           <SiriWave
             width={typeof window !== 'undefined' ? window.innerWidth : 0}
@@ -486,10 +535,25 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             {playlistRef.current.map((song, i) => (
               <div
                 key={i}
-                className="audio-player__list-song"
-                onClick={(e) => { e.stopPropagation(); skipTo(i); setShowPlaylist(false); }}
+                className={`audio-player__list-song ${isWaiting ? 'waiting' : ''}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (onTrackSelect && !isWaiting) {
+                    // Lancer la transaction blockchain pour changer de track
+                    onTrackSelect(song.title);
+                  } else if (!onTrackSelect) {
+                    // Mode local uniquement (fallback)
+                    skipTo(i);
+                  }
+                  setShowPlaylist(false);
+                }}
+                style={{
+                  opacity: isWaiting ? 0.5 : 1,
+                  cursor: isWaiting ? 'not-allowed' : 'pointer'
+                }}
               >
                 {metaByFile[song.file]?.title || song.title}
+                {isWaiting && i === currentIndex && <span> (⏳ Transaction en cours...)</span>}
               </div>
             ))}
           </div>
@@ -499,9 +563,11 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       {/* Volume */}
       {showVolume && (
         <div className="audio-player__volume" onClick={toggleVolume}>
-          <div className="audio-player__volume-bar-empty" onClick={handleVolumeClick}>
-            <div className="audio-player__volume-bar-full" style={{ width: `${volume * 100}%` }} />
-            <div className="audio-player__volume-slider" style={{ left: `${volume * 100}%` }} />
+          <div className="audio-player__volume-controls" onClick={(e) => e.stopPropagation()}>
+            <div className="audio-player__volume-bar-empty" onClick={handleVolumeClick}>
+              <div className="audio-player__volume-bar-full" style={{ width: `${volume * 100}%` }} />
+              <div className="audio-player__volume-slider" style={{ left: `${volume * 100}%` }} />
+            </div>
           </div>
         </div>
       )}
