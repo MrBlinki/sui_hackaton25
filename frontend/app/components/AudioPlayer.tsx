@@ -249,18 +249,24 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           setShowWave(true);
           setDuration(formatTime(Math.round(sound!.duration())));
         },
-        onend: () => { setIsPlaying(false); setShowWave(false); stopTimer(); skip('next'); },
-        onpause: () => { setIsPlaying(false); setShowWave(false); stopTimer(); },
-        onstop:  () => { setIsPlaying(false); setShowWave(false); stopTimer(); resetTimer(); }
+        onend: () => {
+          setIsPlaying(false);
+          setShowWave(false);
+          stopTimer();
+          resetTimer();
+          skip('next');
+        },
+        onstop: () => {
+          setIsPlaying(false);
+          setShowWave(false);
+          stopTimer();
+          resetTimer();
+        }
       });
     }
 
-    if (sound.playing()) {
-      sound.pause();
-      setIsPlaying(false);
-      setShowWave(false);
-      stopTimer();
-    } else {
+    // Jukebox mode: only play, no pause
+    if (!sound.playing()) {
       sound.play();
       // startTimer() sera appelé par le callback onplay
     }
@@ -273,10 +279,6 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     setCurrentIndex(playIndex);
   }, [currentIndex]);
 
-  const pause = useCallback(() => {
-    const sound = playlistRef.current[currentIndex]?.howl;
-    if (sound) { sound.pause(); setIsPlaying(false); }
-  }, [currentIndex]);
 
   const skip = useCallback((direction: 'next' | 'prev') => {
     let index = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
@@ -499,9 +501,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           {!isPlaying && !isLoading && (
             <div className="audio-player__btn audio-player__play-btn" onClick={() => play()} />
           )}
-          {isPlaying && (
-            <div className="audio-player__btn audio-player__pause-btn" onClick={pause} />
-          )}
+          {/* No pause button in jukebox mode - music plays until the end */}
         </div>
         <div className="audio-player__btn audio-player__playlist-btn" onClick={togglePlaylist} />
         <div className="audio-player__btn audio-player__volume-btn"   onClick={toggleVolume} />
