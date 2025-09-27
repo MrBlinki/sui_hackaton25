@@ -221,7 +221,11 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       });
     }
 
-    sound.play();
+    if (sound.playing()) {
+      sound.pause();
+    } else {
+      sound.play();
+    }
     setCurrentIndex(playIndex);
   }, [currentIndex, updateProgress]);
 
@@ -244,12 +248,6 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     play(index);
   }, [currentIndex, play]);
 
-  const seek = useCallback((percentage: number) => {
-    const sound = playlistRef.current[currentIndex]?.howl;
-    if (sound && sound.playing()) {
-      sound.seek(sound.duration() * percentage);
-    }
-  }, [currentIndex]);
 
   const handleVolumeChange = useCallback((vol: number) => {
     setVolume(vol);
@@ -259,15 +257,17 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const togglePlaylist = () => setShowPlaylist(!showPlaylist);
   const toggleVolume   = () => setShowVolume(!showVolume);
 
-  const handleWaveformClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const percentage = (e.clientX - rect.left) / rect.width;
-    seek(percentage);
-  };
 
   const handleVolumeClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    const percentage = (e.clientX - rect.left) / rect.width;
+    let percentage = (e.clientX - rect.left) / rect.width;
+
+    // Snap to 0 if very close to the left edge (within 5% of the bar)
+    if (percentage < 0.05) percentage = 0;
+    // Snap to 1 if very close to the right edge (within 5% of the bar)
+    if (percentage > 0.95) percentage = 1;
+
     handleVolumeChange(Math.min(1, Math.max(0, percentage)));
   };
 
@@ -461,7 +461,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       </div>
 
       {/* Progress / Wave */}
-      <div className="audio-player__waveform" ref={waveformRef} onClick={handleWaveformClick}>
+      <div className="audio-player__waveform" ref={waveformRef}>
         {showWave && mounted ? (
           <SiriWave
             width={typeof window !== 'undefined' ? window.innerWidth : 0}
@@ -499,9 +499,11 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       {/* Volume */}
       {showVolume && (
         <div className="audio-player__volume" onClick={toggleVolume}>
-          <div className="audio-player__volume-bar-empty" onClick={handleVolumeClick}>
-            <div className="audio-player__volume-bar-full" style={{ width: `${volume * 100}%` }} />
-            <div className="audio-player__volume-slider" style={{ left: `${volume * 100}%` }} />
+          <div className="audio-player__volume-controls" onClick={(e) => e.stopPropagation()}>
+            <div className="audio-player__volume-bar-empty" onClick={handleVolumeClick}>
+              <div className="audio-player__volume-bar-full" style={{ width: `${volume * 100}%` }} />
+              <div className="audio-player__volume-slider" style={{ left: `${volume * 100}%` }} />
+            </div>
           </div>
         </div>
       )}
