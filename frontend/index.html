@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎵 Music Jukebox - Test Walrus</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 30px;
+            border-radius: 15px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.37);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+
+        .test-section {
+            background: rgba(255, 255, 255, 0.1);
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .test-section h3 {
+            margin-top: 0;
+            color: #ffd700;
+        }
+
+        input, textarea {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            font-size: 16px;
+        }
+
+        button {
+            background: linear-gradient(45deg, #ff6b6b, #ee5a24);
+            color: white;
+            border: none;
+            padding: 15px 25px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            margin: 10px 5px;
+            transition: transform 0.2s;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .result {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .success { color: #2ecc71; }
+        .error { color: #e74c3c; }
+        .info { color: #3498db; }
+
+        audio {
+            width: 100%;
+            margin: 15px 0;
+            border-radius: 8px;
+        }
+
+        .blob-id-input {
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Music Jukebox</h1>
+        <p style="text-align: center; font-size: 1.2em;">Test Walrus HTTP API pour télécharger et jouer de la musique</p>
+
+        <!-- Section 1: Test avec ton Blob ID existant -->
+        <div class="test-section">
+            <h3>🎧 Test 1: Télécharger ton MP3 depuis Walrus</h3>
+            <p>Utilise le Blob ID que tu as déjà uploadé :</p>
+
+            <input
+                type="text"
+                id="existing-blob-id"
+                class="blob-id-input"
+                value="n3BKzEC2oBH5vf22mj4bYQurNJjc_cT6p-gMTEMvyYs"
+                placeholder="Blob ID Walrus...">
+
+            <button onclick="downloadFromWalrus()">📥 Télécharger depuis Walrus</button>
+            <button onclick="playAudio()" id="play-btn" disabled>▶️ Jouer la musique</button>
+
+            <div id="download-result" class="result" style="display: none;"></div>
+
+            <!-- Lecteur audio (caché au début) -->
+            <audio id="audio-player" controls style="display: none;">
+                Votre navigateur ne supporte pas l'audio HTML5.
+            </audio>
+        </div>
+
+        <!-- Section 2: Upload nouveau fichier -->
+        <div class="test-section">
+            <h3>🚀 Test 2: Upload nouveau MP3 vers Walrus</h3>
+            <p>Sélectionne un fichier MP3 à uploader :</p>
+
+            <input type="file" id="file-input" accept="audio/mp3,audio/mpeg">
+            <button onclick="uploadToWalrus()">📤 Upload vers Walrus</button>
+
+            <div id="upload-result" class="result" style="display: none;"></div>
+        </div>
+
+        <!-- Section 3: Infos techniques -->
+        <div class="test-section">
+            <h3>⚙️ Endpoints Walrus Testnet</h3>
+            <p><strong>Publisher:</strong> https://publisher.walrus-testnet.walrus.space</p>
+            <p><strong>Aggregator:</strong> https://aggregator.walrus-testnet.walrus.space</p>
+            <p><strong>Note:</strong> Tests direct depuis le navigateur (CORS peut bloquer)</p>
+        </div>
+    </div>
+
+    <script>
+        // Configuration Backend (au lieu d'appeler Walrus directement)
+        const BACKEND_URL = "http://localhost:3001";
+
+        let currentAudioBlob = null;
+
+        // 📥 FONCTION: Télécharger depuis Walrus (via notre backend)
+        async function downloadFromWalrus() {
+            const blobId = document.getElementById('existing-blob-id').value.trim();
+            const resultDiv = document.getElementById('download-result');
+            const playBtn = document.getElementById('play-btn');
+            const audioPlayer = document.getElementById('audio-player');
+
+            if (!blobId) {
+                showResult(resultDiv, '❌ Veuillez entrer un Blob ID', 'error');
+                return;
+            }
+
+            showResult(resultDiv, '🔄 Téléchargement depuis Walrus via backend...', 'info');
+
+            try {
+                // Appeler notre backend au lieu de Walrus directement
+                const url = `${BACKEND_URL}/api/audio/${blobId}`;
+                console.log('📥 Downloading from backend:', url);
+
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    throw new Error(`Backend error: ${response.status} - ${errorData.error || response.statusText}`);
+                }
+
+                // Créer URL pour le lecteur audio directement
+                const audioUrl = url; // Le backend stream directement
+                audioPlayer.src = audioUrl;
+                audioPlayer.style.display = 'block';
+
+                // Activer le bouton play
+                playBtn.disabled = false;
+
+                showResult(resultDiv,
+                    `✅ Audio prêt à jouer!\n` +
+                    `🔗 Blob ID: ${blobId}\n` +
+                    `📡 Via backend: ${BACKEND_URL}\n` +
+                    `🎵 Source: Walrus Network`,
+                    'success');
+
+            } catch (error) {
+                console.error('❌ Download error:', error);
+                showResult(resultDiv,
+                    `❌ Erreur de téléchargement:\n${error.message}\n\n` +
+                    `💡 Vérifiez que:\n` +
+                    `- Le backend est démarré (npm run dev)\n` +
+                    `- Le Blob ID est valide\n` +
+                    `- Walrus Network est accessible`,
+                    'error');
+
+                playBtn.disabled = true;
+                audioPlayer.style.display = 'none';
+            }
+        }
+
+        // ▶️ FONCTION: Jouer l'audio
+        function playAudio() {
+            const audioPlayer = document.getElementById('audio-player');
+
+            if (audioPlayer.src) {
+                audioPlayer.play().catch(error => {
+                    console.error('❌ Play error:', error);
+                    alert('Erreur de lecture audio: ' + error.message);
+                });
+            }
+        }
+
+        // 📤 FONCTION: Upload vers Walrus (via notre backend)
+        async function uploadToWalrus() {
+            const fileInput = document.getElementById('file-input');
+            const resultDiv = document.getElementById('upload-result');
+
+            if (!fileInput.files.length) {
+                showResult(resultDiv, '❌ Veuillez sélectionner un fichier MP3', 'error');
+                return;
+            }
+
+            const file = fileInput.files[0];
+
+            if (!file.type.includes('audio')) {
+                showResult(resultDiv, '❌ Veuillez sélectionner un fichier audio', 'error');
+                return;
+            }
+
+            showResult(resultDiv,
+                `🔄 Upload vers Walrus via backend...\n` +
+                `📝 Fichier: ${file.name}\n` +
+                `📊 Taille: ${(file.size / 1024 / 1024).toFixed(2)} MB`,
+                'info');
+
+            try {
+                // Créer FormData pour l'upload
+                const formData = new FormData();
+                formData.append('audio', file);
+
+                // Upload vers notre backend
+                const response = await fetch(`${BACKEND_URL}/api/upload`, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+                    throw new Error(`Backend error: ${response.status} - ${errorData.error || response.statusText}`);
+                }
+
+                const result = await response.json();
+                console.log('📥 Backend response:', result);
+
+                if (!result.blobId) {
+                    throw new Error('Blob ID non trouvé dans la réponse backend');
+                }
+
+                showResult(resultDiv,
+                    `✅ Upload réussi!\n` +
+                    `🔗 Blob ID: ${result.blobId}\n` +
+                    `📝 Fichier: ${result.filename}\n` +
+                    `📊 Taille: ${(result.size / 1024 / 1024).toFixed(2)} MB\n\n` +
+                    `💡 Copie ce Blob ID pour l'utiliser dans le smart contract!`,
+                    'success');
+
+                // Remplir automatiquement le champ Blob ID
+                document.getElementById('existing-blob-id').value = result.blobId;
+
+            } catch (error) {
+                console.error('❌ Upload error:', error);
+                showResult(resultDiv,
+                    `❌ Erreur d'upload:\n${error.message}\n\n` +
+                    `💡 Vérifiez que:\n` +
+                    `- Le backend est démarré (npm run dev)\n` +
+                    `- Le fichier n'est pas trop volumineux (< 50MB)\n` +
+                    `- Walrus Network est accessible`,
+                    'error');
+            }
+        }
+
+        // 📝 FONCTION: Afficher résultats
+        function showResult(element, message, type) {
+            element.textContent = message;
+            element.className = `result ${type}`;
+            element.style.display = 'block';
+        }
+
+        // 🎵 FONCTION: Test au chargement de la page
+        window.addEventListener('load', () => {
+            console.log('🎵 Music Jukebox Frontend chargé');
+            console.log('📡 Walrus Aggregator:', WALRUS_CONFIG.aggregator);
+            console.log('📡 Walrus Publisher:', WALRUS_CONFIG.publisher);
+        });
+    </script>
+</body>
+</html>
