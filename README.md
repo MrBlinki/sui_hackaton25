@@ -8,3 +8,11 @@ Jukebox on SUI
 - Artists can upload their music
 - Music is stored on Walrus
 - When a listener pays for a track, artist of the track gets a share  
+
+## Move module structure (objects)
+- Jukebox
+  - Playlist
+    - Track
+      - Artist
+        - Wallet address
+      - Blob walrus
