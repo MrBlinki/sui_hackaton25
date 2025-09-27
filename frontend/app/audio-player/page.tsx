@@ -2,16 +2,12 @@ import AudioPlayer from '../components/AudioPlayer';
 
 const customPlaylist = [
   {
-    title: 'Rave Digger',
-    file: 'rave_digger'
+    title: 'Horizon',
+    file: 'horizon'
   },
   {
-    title: '80s Vibe',
-    file: '80s_vibe'
-  },
-  {
-    title: 'Running Out',
-    file: 'running_out'
+    title: 'Inside Out',
+    file: 'inside_out'
   }
 ];
 
