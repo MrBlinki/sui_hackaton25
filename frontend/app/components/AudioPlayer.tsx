@@ -62,6 +62,8 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const animationRef = useRef<number>();
   const playlistRef = useRef<Song[]>(playlist);
   const rootRef = useRef<HTMLDivElement>(null);
+  const timerIntervalRef = useRef<NodeJS.Timeout>();
+  const currentTimeRef = useRef<number>(0);
 
   useEffect(() => { setMounted(true); }, []);
   useEffect(() => { playlistRef.current = playlist; }, [playlist]);
@@ -72,15 +74,45 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
   };
 
-  const updateProgress = useCallback(() => {
-    const sound = playlistRef.current[currentIndex]?.howl;
-    if (sound && sound.playing()) {
-      const seek = Number(sound.seek()) || 0;
-      setTimer(formatTime(Math.round(seek)));
-      setProgress(((seek / sound.duration()) * 100) || 0);
-      animationRef.current = requestAnimationFrame(updateProgress);
+  const startTimer = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
     }
+
+    timerIntervalRef.current = setInterval(() => {
+      currentTimeRef.current += 1;
+      setTimer(formatTime(currentTimeRef.current));
+
+      // Calculate progress based on current time and total duration
+      const sound = playlistRef.current[currentIndex]?.howl;
+      if (sound && sound.duration()) {
+        const progressPercent = (currentTimeRef.current / sound.duration()) * 100;
+        setProgress(Math.min(progressPercent, 100));
+
+        // Auto next track when reached end
+        if (currentTimeRef.current >= sound.duration()) {
+          if (timerIntervalRef.current) {
+            clearInterval(timerIntervalRef.current);
+            timerIntervalRef.current = undefined;
+          }
+          // We'll handle auto-next via the onend callback instead
+        }
+      }
+    }, 1000);
   }, [currentIndex]);
+
+  const stopTimer = useCallback(() => {
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = undefined;
+    }
+  }, []);
+
+  const resetTimer = useCallback(() => {
+    currentTimeRef.current = 0;
+    setTimer('0:00');
+    setProgress(0);
+  }, []);
 
   // ---- Metadata extraction (incl. cover art) ----
   const extractMetadata = useCallback(async (mp3Url: string): Promise<TrackMeta> => {
@@ -205,29 +237,41 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       setIsLoading(true);
       sound = data.howl = new Howl({
         src: [`/audio/${data.file}.mp3`],
-        html5: true,
         onplay: () => {
           setDuration(formatTime(Math.round(sound!.duration())));
           setIsPlaying(true);
           setIsLoading(false);
           setShowWave(true);
-          animationRef.current = requestAnimationFrame(updateProgress);
+          startTimer();
         },
-        onload: () => { setIsLoading(false); setShowWave(true); },
-        onend: () => { setIsPlaying(false); setShowWave(false); skip('next'); },
-        onpause: () => { setIsPlaying(false); setShowWave(false); },
-        onstop:  () => { setIsPlaying(false); setShowWave(false); },
-        onseek:  () => { animationRef.current = requestAnimationFrame(updateProgress); }
+        onload: () => {
+          setIsLoading(false);
+          setShowWave(true);
+          setDuration(formatTime(Math.round(sound!.duration())));
+        },
+        onend: () => { setIsPlaying(false); setShowWave(false); stopTimer(); skip('next'); },
+        onpause: () => { setIsPlaying(false); setShowWave(false); stopTimer(); },
+        onstop:  () => { setIsPlaying(false); setShowWave(false); stopTimer(); resetTimer(); }
       });
     }
 
     if (sound.playing()) {
       sound.pause();
+      setIsPlaying(false);
+      setShowWave(false);
+      stopTimer();
     } else {
       sound.play();
+      // startTimer() sera appelé par le callback onplay
     }
+
+    // Update duration for already loaded sounds
+    if (sound.state() === 'loaded') {
+      setDuration(formatTime(Math.round(sound.duration())));
+    }
+
     setCurrentIndex(playIndex);
-  }, [currentIndex, updateProgress]);
+  }, [currentIndex]);
 
   const pause = useCallback(() => {
     const sound = playlistRef.current[currentIndex]?.howl;
@@ -244,9 +288,11 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const skipTo = useCallback((index: number) => {
     const currentSound = playlistRef.current[currentIndex]?.howl;
     if (currentSound) currentSound.stop();
+    stopTimer();
+    resetTimer();
     setProgress(0);
     play(index);
-  }, [currentIndex, play]);
+  }, [currentIndex, play, stopTimer, resetTimer]);
 
 
   const handleVolumeChange = useCallback((vol: number) => {
@@ -275,6 +321,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   useEffect(() => {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       playlistRef.current.forEach(s => s.howl?.unload());
       createdObjectUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
       createdObjectUrlsRef.current = [];
