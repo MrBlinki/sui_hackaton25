@@ -1,89 +1,189 @@
-'use client';
+// App.tsx
+"use client";
 
-import { useEffect, useRef, useState } from "react";
-import { SuiClient, getFullnodeUrl } from "@mysten/sui/client";
-import { DEVNET_JUKEBOX_OBJECT_ID } from "@/constants";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  ConnectModal,
+  useCurrentAccount,
+  useSignAndExecuteTransaction,
+  useSuiClient,
+  useSuiClientQuery,
+} from "@mysten/dapp-kit";
+import { Transaction } from "@mysten/sui/transactions";
 
-// 👇 import the player, its handle type, and (optionally) pass a playlist
+import SearchTrack from "./components/SearchTrack";
 import AudioPlayer, { AudioPlayerHandle } from "@/components/AudioPlayer";
+import { useNetworkVariable } from "./networkConfig";
 
-// Example local playlist the player can use (titles must match on-chain value)
+// Local playlist used by the AudioPlayer (titles must match on-chain values)
 const PLAYLIST = [
-  { title: 'Horizon', file: 'horizon' },
-  { title: 'skelet',  file: 'inside_out' },
-  { title: 'Hello Song', file: 'hello' },
+  { title: "Horizon", file: "horizon" },
+  { title: "skelet", file: "inside_out" },
 ];
 
-const client = new SuiClient({ url: getFullnodeUrl("devnet") });
+// ---- Types & helpers to read your Move object ----
+type JukeboxFields = {
+  current_track: string;
+};
+function getJukeboxFields(data?: any): JukeboxFields | null {
+  if (!data || data.content?.dataType !== "moveObject") return null;
+  return data.content.fields as unknown as JukeboxFields;
+}
+
+// ==== Important runtime constants ====
+// If your Move function enforces an exact fee, match it here.
+const JUKEBOX_FEE_MIST = 1_000_000_000n; // exactly 1 SUI
+// Give the tx an explicit gas budget so dry-run can simulate.
+const GAS_BUDGET_MIST = 100_000_000n; // 0.1 SUI (tweak if needed)
 
 export default function App() {
-  const [currentTrack, setCurrentTrack] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // IDs pulled from your network config
+  const jukeboxPackageId = useNetworkVariable("jukeboxPackageId"); // e.g. 0x4ece...
+  const jukeboxObjectId = useNetworkVariable("jukeboxObjectId");   // e.g. 0x2fee...
 
-  // 👇 ref to call methods on the player
+  const suiClient = useSuiClient();
+  const currentAccount = useCurrentAccount();
+  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+
   const playerRef = useRef<AudioPlayerHandle>(null);
+  const [waiting, setWaiting] = useState(false);
+  const [uiMsg, setUiMsg] = useState<string | null>(null);
 
+  // 🔓 Connect modal control + "retry after connect" memory
+  const [showConnect, setShowConnect] = useState(false);
+  const [pendingQuery, setPendingQuery] = useState<string | null>(null);
+
+  // Guard against missing object ID in the query
+  const canQueryObject = Boolean(jukeboxObjectId);
+
+  // Query the on-chain jukebox object; refetch after tx success
+  const { data, isPending, error, refetch } = useSuiClientQuery(
+    "getObject",
+    {
+      id: jukeboxObjectId || "",
+      options: { showContent: true },
+    },
+    // @ts-expect-error: the hook accepts a 3rd "options" param in runtime; this silences TS
+    { enabled: canQueryObject }
+  );
+
+  const fields = useMemo(() => getJukeboxFields(data?.data), [data]);
+
+  // Auto-play locally whenever the on-chain current_track changes
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-
-    const fetchCurrentTrack = async () => {
-      try {
-        const res = await client.getObject({
-          id: DEVNET_JUKEBOX_OBJECT_ID,
-          options: { showContent: true },
-        });
-
-        if (!res.data || res.data.content?.dataType !== "moveObject") {
-          setError("Object not found or not a Move object");
-          return;
-        }
-
-        const fields = (res.data.content as any).fields;
-        setCurrentTrack(fields.current_track as string);
-      } catch (e: any) {
-        console.error(e);
-        setError(e.message);
-      }
-    };
-
-    // Fetch immediately, then every 5 seconds
-    fetchCurrentTrack();
-    interval = setInterval(fetchCurrentTrack, 5000);
-
-    // Cleanup on unmount
-    return () => clearInterval(interval);
-  }, []);
-
-
-  // Try to auto-play when currentTrack arrives.
-  // NOTE: Most browsers block autoplay with sound until a user gesture.
-  // If it's blocked, we also render a button below to trigger it manually.
-  useEffect(() => {
-    if (currentTrack && playerRef.current) {
-      playerRef.current.playByTitle(currentTrack);
+    const title = fields?.current_track;
+    if (title && playerRef.current) {
+      playerRef.current.playByTitle(title);
     }
-  }, [currentTrack]);
+  }, [fields?.current_track]);
+
+  // After the user connects, if we had a pending search, run it once.
+  useEffect(() => {
+    if (currentAccount && pendingQuery) {
+      void doChangeTrack(pendingQuery);
+      setPendingQuery(null);
+      setShowConnect(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAccount]);
+
+  const missingIds = !jukeboxPackageId || !jukeboxObjectId;
+
+  // Core tx logic (splits a Coin<SUI> and calls change_track)
+  const doChangeTrack = async (newTitle: string) => {
+    try {
+      setUiMsg(null);
+      setWaiting(true);
+
+      const tx = new Transaction();
+
+      // Set an explicit gas budget to help the dry-run determine costs.
+      tx.setGasBudget(GAS_BUDGET_MIST);
+
+      // 🪙 Split EXACTLY the fee your Move function expects (1 SUI here).
+      const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(JUKEBOX_FEE_MIST)]);
+
+      // Signature expected: change_track(&mut Jukebox, Coin<SUI>, String, &mut TxContext)
+      tx.moveCall({
+        target: `${jukeboxPackageId}::jukebox::change_track`,
+        arguments: [
+          tx.object(jukeboxObjectId),   // &mut Jukebox
+          payment,                      // Coin<SUI> (exact fee)
+          tx.pure.string(newTitle),     // String
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: async ({ digest }) => {
+            await suiClient.waitForTransaction({ digest });
+            await refetch(); // pull fresh current_track from chain
+            setUiMsg(`Track changed on-chain to "${newTitle}".`);
+            setWaiting(false);
+          },
+          onError: (err) => {
+            setUiMsg(`Transaction failed: ${String((err as any)?.message || err)}`);
+            setWaiting(false);
+          },
+        },
+      );
+    } catch (e: any) {
+      setUiMsg(`Unexpected error: ${e?.message || String(e)}`);
+      setWaiting(false);
+    }
+  };
+
+  // Called by the Search component
+  const handleSearch = async (rawTitle: string) => {
+    const newTitle = rawTitle.trim();
+    if (!newTitle) {
+      setUiMsg("Type a track title first.");
+      return;
+    }
+    if (waiting) {
+      setUiMsg("Please wait for the previous transaction.");
+      return;
+    }
+    if (missingIds) {
+      setUiMsg("Jukebox IDs are not configured for this network.");
+      return;
+    }
+    // If not connected, open wallet and remember the intended action
+    if (!currentAccount) {
+      setPendingQuery(newTitle);
+      setShowConnect(true);
+      return;
+    }
+    // Connected → run the tx
+    await doChangeTrack(newTitle);
+  };
 
   return (
-    <div className="bg-white text-black">
-      {/* <h1 className="text-xl font-bold">On-Chain Jukebox</h1>
+    <div className="bg-white text-black p-4 space-y-4">
+      {/* Search box triggers on-chain change_track; if disconnected,
+          we open the connect modal and retry once connected. */}
+      <SearchTrack
+        onSearch={handleSearch}
+        placeholder={waiting ? "Submitting…" : "Search track by title…"}
+        className="mb-2"
+      />
 
-      {error && <p className="text-red-600">Error: {error}</p>}
-      {!error && !currentTrack && <p>Loading…</p>}
-      {currentTrack && <p>Current Track (from chain): {currentTrack}</p>} */}
+      {isPending && <div className="text-sm text-muted-foreground">Loading…</div>}
+      {error && <div className="text-sm text-red-600">Error: {error.message}</div>}
+      {uiMsg && <div className="text-sm">{uiMsg}</div>}
 
-      {/* The audio player; pass the same playlist that contains those titles */}
-        <AudioPlayer ref={playerRef} playlist={PLAYLIST} />
+      {fields?.current_track && (
+        <div className="text-sm">
+          On-chain current track: <b>{fields.current_track}</b>
+        </div>
+      )}
 
-      {/* Fallback play button for browsers that block autoplay
-      {currentTrack && (
-        <button
-          className="mt-4 px-4 py-2 rounded bg-black text-white"
-          onClick={() => playerRef.current?.playByTitle(currentTrack)}
-        >
-          ▶ Play on-chain track
-        </button>
-      )} */}
+      {/* Local player mirrors the on-chain title list */}
+      <AudioPlayer ref={playerRef} playlist={PLAYLIST} />
+
+      {/* Wallet connect modal; lives anywhere under WalletProvider */}
+      <ConnectModal open={showConnect} onOpenChange={setShowConnect} />
     </div>
   );
 }
