@@ -19,8 +19,8 @@ interface AudioPlayerProps {
 
 const defaultPlaylist: Song[] = [
   {
-    title: 'Rave Digger',
-    file: 'rave_digger'
+    title: 'Horizon',
+    file: 'horizon'
   },
   {
     title: '80s Vibe',
