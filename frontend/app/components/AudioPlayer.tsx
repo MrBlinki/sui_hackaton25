@@ -36,8 +36,8 @@ export type AudioPlayerHandle = {
 const defaultPlaylist: Song[] = [
   { title: 'Horizon', file: 'horizon' },
   { title: 'skelet',  file: 'inside_out' },
-  { title: 'wax',  file: 'wax' },
-  { title: 'atmosphere',  file: 'atmosphere' }
+  { title: 'wax',     file: 'wax' },
+  { title: 'atmosphere', file: 'atmosphere' }
 ];
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
@@ -334,6 +334,69 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       }
     })();
   }, [currentMeta?.pictureUrl]);
+
+  // ====== CHAIN POLLING: reload every 5000ms and switch track if it changed ======
+
+  // Replace this with your actual chain query.
+  // Return a stable key to identify the track, ideally the `file` slug; title as fallback.
+  async function fetchCurrentTrackFromChain(): Promise<{ file?: string; title?: string } | null> {
+    // Example stub:
+    // const res = await fetch("/api/chain/current-track", { cache: "no-store" });
+    // return await res.json();
+    return null;
+  }
+
+  // Keep last seen on-chain choice to detect changes.
+  const lastChainTrackRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const now = await fetchCurrentTrackFromChain();
+        if (cancelled || !now) return;
+
+        const key = now.file || now.title;
+        if (!key) return;
+
+        if (key !== lastChainTrackRef.current) {
+          lastChainTrackRef.current = key;
+
+          // Try match by file first
+          const byFileIdx = playlistRef.current.findIndex(s => s.file === key);
+          if (byFileIdx !== -1) {
+            skipTo(byFileIdx);
+            return;
+          }
+
+          // Fallback: match by title (case-insensitive)
+          const byTitleIdx = playlistRef.current.findIndex(
+            s => s.title.toLowerCase() === key.toLowerCase()
+          );
+          if (byTitleIdx !== -1) {
+            skipTo(byTitleIdx);
+            return;
+          }
+
+          // Optional: if not found locally, refresh playlist from server here.
+        }
+      } catch (e) {
+        console.warn("Chain poll failed:", e);
+      }
+    };
+
+    // Run immediately, then every 5 seconds
+    tick();
+    const id = setInterval(tick, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [playlist, skipTo]);
+
+  // ====== /CHAIN POLLING ======
 
   return (
     <div className="audio-player" ref={rootRef}>
