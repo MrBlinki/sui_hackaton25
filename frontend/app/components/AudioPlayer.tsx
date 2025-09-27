@@ -339,11 +339,35 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
   // Replace this with your actual chain query.
   // Return a stable key to identify the track, ideally the `file` slug; title as fallback.
+// Fetch current track from SUI blockchain via Next.js API
   async function fetchCurrentTrackFromChain(): Promise<{ file?: string; title?: string } | null> {
-    // Example stub:
-    // const res = await fetch("/api/chain/current-track", { cache: "no-store" });
-    // return await res.json();
-    return null;
+    try {
+      const res = await fetch("/api/chain/current-track", {
+        cache: "no-store",
+        headers: { 'Cache-Control': 'no-cache' }
+      });
+
+      if (!res.ok) {
+        console.warn('Chain API response not ok:', res.status);
+        return null;
+      }
+
+      const data = await res.json();
+
+      if (data.error) {
+        console.warn('Chain API error:', data.error);
+        return null;
+      }
+
+      // Return the track data from blockchain
+      return {
+        title: data.current_track || data.title,
+        file: data.file
+      };
+    } catch (error) {
+      console.warn('fetchCurrentTrackFromChain failed:', error);
+      return null;
+    }
   }
 
   // Keep last seen on-chain choice to detect changes.
