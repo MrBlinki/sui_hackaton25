@@ -24,10 +24,20 @@ interface TrackMeta {
   pictureUrl?: string; // object URL created from embedded artwork
 }
 
+interface ChatMessage {
+  id: string;
+  address: string;
+  message: string;
+  timestamp: number;
+}
+
 interface AudioPlayerProps {
   playlist?: Song[];
   onTrackSelect?: (title: string) => void;
   isWaiting?: boolean;
+  currentAccount?: any;
+  onChatMessage?: (message: string) => Promise<void>;
+  chatMessages?: ChatMessage[];
 }
 
 // Methods the parent can call via ref
@@ -43,7 +53,7 @@ const defaultPlaylist: Song[] = [
 ];
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-({ playlist = defaultPlaylist, onTrackSelect, isWaiting = false }, ref) => {
+({ playlist = defaultPlaylist, onTrackSelect, isWaiting = false, currentAccount, onChatMessage, chatMessages = [] }, ref) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -55,6 +65,10 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const [showVolume, setShowVolume] = useState(false);
   const [showWave, setShowWave] = useState(false);
   const [mounted, setMounted] = useState(false);
+
+  // Chat states
+  const [chatMessage, setChatMessage] = useState('');
+  const [isSigning, setIsSigning] = useState(false);
 
   // metadata state (keyed by song.file)
   const [metaByFile, setMetaByFile] = useState<Record<string, TrackMeta>>({});
@@ -307,6 +321,52 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const togglePlaylist = () => setShowPlaylist(!showPlaylist);
   const toggleVolume   = () => setShowVolume(!showVolume);
 
+  // Current song reference for chat
+  const currentSong = playlistRef.current[currentIndex];
+
+  // Chat functions
+  const handleChatSubmit = useCallback(async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatMessage.trim() || isSigning) return;
+
+    // Check if wallet is connected
+    if (!currentAccount) {
+      console.log('❌ No wallet connected');
+      alert('Please connect your wallet first');
+      return;
+    }
+
+    if (!onChatMessage) {
+      console.log('❌ Chat message handler not available');
+      return;
+    }
+
+    try {
+      setIsSigning(true);
+      console.log('💬 Sending chat message with micro-transaction...');
+
+      // Use the same transaction logic as track selection (will emit event)
+      await onChatMessage(chatMessage.trim());
+
+      // Clear the message input - the message will appear via polling
+      setChatMessage('');
+      console.log('✅ Chat message event emitted successfully');
+
+    } catch (error) {
+      console.error('❌ Failed to send chat message:', error);
+
+      // Show user-friendly error and DON'T clear the message
+      if ((error as any)?.message?.includes('rejected')) {
+        console.log('User rejected the transaction');
+      } else {
+        console.log('Transaction error:', error);
+      }
+      // Don't clear chatMessage so user can retry
+    } finally {
+      setIsSigning(false);
+    }
+  }, [chatMessage, isSigning, currentAccount, onChatMessage]);
+
 
   const handleVolumeClick = (e: React.MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -346,7 +406,6 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
   useImperativeHandle(ref, () => ({ playByTitle }), [playByTitle]);
 
-  const currentSong = playlistRef.current[currentIndex];
   const currentMeta: TrackMeta | undefined = currentSong ? metaByFile[currentSong.file] : undefined;
   const displayTitle = currentMeta?.title || currentSong?.title || '';
   const displayArtist = currentMeta?.artist;
@@ -571,6 +630,40 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           </div>
         </div>
       )}
+
+      {/* Chat Interface */}
+      <div className="audio-player__chat">
+        <div className="audio-player__chat-messages">
+          {chatMessages?.map((msg) => (
+            <div key={msg.id} className="audio-player__chat-message">
+              <span className="audio-player__chat-address">{msg.address}:</span>
+              <span className="audio-player__chat-text">{msg.message}</span>
+            </div>
+          ))}
+        </div>
+        <form onSubmit={handleChatSubmit} className="audio-player__chat-form">
+          <input
+            type="text"
+            value={chatMessage}
+            onChange={(e) => setChatMessage(e.target.value)}
+            placeholder={isSigning ? "Signing message..." : "Type a message..."}
+            className="audio-player__chat-input"
+            maxLength={100}
+            disabled={isSigning}
+          />
+          <button
+            type="submit"
+            className="audio-player__chat-send"
+            disabled={isSigning || !chatMessage.trim()}
+          >
+            {isSigning ? (
+              <span className="audio-player__chat-loading">⟳</span>
+            ) : (
+              <span className="audio-player__chat-arrow">›</span>
+            )}
+          </button>
+        </form>
+      </div>
     </div>
   );
 });

@@ -1,7 +1,7 @@
 // App.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import {
   ConnectModal,
   useCurrentAccount,
@@ -21,6 +21,14 @@ const PLAYLIST = [
   { title: 'wax',  file: 'wax' },
   { title: 'atmosphere',  file: 'atmosphere' }
 ];
+
+// Chat message type
+interface ChatMessage {
+  id: string;
+  address: string;
+  message: string;
+  timestamp: number;
+}
 
 // ---- Types & helpers to read your Move object ----
 type JukeboxFields = {
@@ -49,6 +57,7 @@ export default function App() {
   const playerRef = useRef<AudioPlayerHandle>(null);
   const [waiting, setWaiting] = useState(false);
   const [uiMsg, setUiMsg] = useState<string | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   // 🔓 Connect modal control + "retry after connect" memory
   const [showConnect, setShowConnect] = useState(false);
@@ -135,6 +144,95 @@ export default function App() {
     }
   };
 
+  // Fetch chat messages from blockchain events
+  const fetchChatMessages = useCallback(async (): Promise<ChatMessage[]> => {
+    try {
+      if (!jukeboxPackageId) return [];
+
+      // Query for chat message events
+      const events = await suiClient.queryEvents({
+        query: {
+          MoveEventType: `${jukeboxPackageId}::jukebox::ChatMessageEvent`
+        },
+        limit: 50, // Get last 50 events
+        order: 'descending'
+      });
+
+      // Parse events into chat messages
+      const messages: ChatMessage[] = events.data.map((event, index) => {
+        const eventData = event.parsedJson as any;
+        const timestamp = parseInt(event.timestampMs || Date.now().toString());
+
+        return {
+          id: event.id?.txDigest + '_' + index || Date.now().toString() + '_' + index,
+          address: eventData.sender?.slice(0, 6) + '...' + eventData.sender?.slice(-4) || 'Unknown',
+          message: eventData.message || eventData.content || 'Unknown message',
+          timestamp: timestamp
+        };
+      });
+
+      // Sort by timestamp (newest first) and limit to 10
+      return messages
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, 10);
+
+    } catch (error) {
+      console.warn('Failed to fetch chat messages:', error);
+      return [];
+    }
+  }, [suiClient, jukeboxPackageId]);
+
+  // Chat message handler (micro-transaction with event)
+  const handleChatMessage = async (message: string) => {
+    try {
+      setUiMsg(null);
+      setWaiting(true);
+
+      const tx = new Transaction();
+
+      // Set an explicit gas budget
+      tx.setGasBudget(GAS_BUDGET_MIST);
+
+      // 💬 Split a small fee for chat messages (0.001 SUI)
+      const CHAT_FEE_MIST = 1000000n; // 0.001 SUI
+      const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(CHAT_FEE_MIST)]);
+
+      // Send the chat fee to a burn address (or keep it simple and transfer to null address)
+      tx.transferObjects([payment], tx.pure.address('0x0000000000000000000000000000000000000000000000000000000000000000'));
+
+      // 📢 Call jukebox to emit a chat message event
+      tx.moveCall({
+        target: `${jukeboxPackageId}::jukebox::send_chat_message`,
+        arguments: [
+          tx.object(jukeboxObjectId),      // &mut Jukebox
+          tx.pure.string(message),         // message content
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: async ({ digest }) => {
+            await suiClient.waitForTransaction({ digest });
+            console.log(`💬 Chat message event emitted: ${digest}`);
+            // Refresh chat messages after successful transaction
+            const newMessages = await fetchChatMessages();
+            setChatMessages(newMessages);
+            setWaiting(false);
+          },
+          onError: (err) => {
+            console.error('Chat transaction failed:', err);
+            setWaiting(false);
+            throw err; // Re-throw to be caught by AudioPlayer
+          },
+        },
+      );
+    } catch (e: any) {
+      setWaiting(false);
+      throw e;
+    }
+  };
+
   // Called by the Search component
   const handleSearch = async (rawTitle: string) => {
     const newTitle = rawTitle.trim();
@@ -160,6 +258,31 @@ export default function App() {
     await doChangeTrack(newTitle);
   };
 
+  // ====== CHAT MESSAGES POLLING ======
+  useEffect(() => {
+    let cancelled = false;
+
+    const pollChatMessages = async () => {
+      try {
+        const messages = await fetchChatMessages();
+        if (!cancelled) {
+          setChatMessages(messages);
+        }
+      } catch (e) {
+        console.warn("Chat messages poll failed:", e);
+      }
+    };
+
+    // Poll immediately, then every 10 seconds
+    pollChatMessages();
+    const id = setInterval(pollChatMessages, 10000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [fetchChatMessages]);
+
   return (
     <div className="bg-white text-black">
       {isPending && <div className="text-sm text-muted-foreground">Loading…</div>}
@@ -178,6 +301,9 @@ export default function App() {
         playlist={PLAYLIST}
         onTrackSelect={handleSearch}
         isWaiting={waiting}
+        currentAccount={currentAccount}
+        onChatMessage={handleChatMessage}
+        chatMessages={chatMessages}
       />
 
       {/* Wallet connect modal; lives anywhere under WalletProvider */}
