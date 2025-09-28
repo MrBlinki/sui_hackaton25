@@ -1,5 +1,6 @@
 # sui_hackaton25
-SUI &lt;> BSA Hackathon 3rd Edition 💧
+SUI &lt;> BSA Hackathon 3rd Edition 💧  
+Project made as a team of 5 in ~24 hours
 
 ## Package and object IDs (testnet)
 - JUKEBOX_PACKAGE_ID:
