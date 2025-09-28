@@ -500,6 +500,55 @@
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
 }
 
+/* Donation button styles - same as upload button but with coins */
+.audio-player__donation-btn {
+  background-color: var(--text);
+  width: 35px;
+  height: 35px;
+  top: 50%;
+  right: 3%;
+  margin: -17.5px auto;
+  opacity: 0.95;
+  border-radius: 5px;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.audio-player__donation-btn:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.audio-player__donation-btn::before {
+  content: '';
+  position: absolute;
+  top: 30%;
+  left: 40%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  background-color: white;
+  border-radius: 50%;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+}
+
+.audio-player__donation-btn::after {
+  content: '';
+  position: absolute;
+  top: 55%;
+  left: 60%;
+  transform: translate(-50%, -50%);
+  width: 8px;
+  height: 8px;
+  background-color: white;
+  border-radius: 50%;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
+}
+
 /* Walrus Panel Scrollbar */
 .walrus-panel-scroll::-webkit-scrollbar {
   width: 6px;

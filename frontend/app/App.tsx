@@ -549,6 +549,22 @@ export default function App() {
         />
       )}
 
+      {/* Donation button - decorative only */}
+      {currentAccount && (
+        <div style={{
+          position: 'fixed',
+          bottom: '220px',
+          right: '3%',
+          zIndex: 1000
+        }}>
+          <div
+            onClick={() => console.log('💰 Donation clicked!')}
+            className="audio-player__btn audio-player__donation-btn"
+            title="Donation (coming soon)"
+          />
+        </div>
+      )}
+
       {/* Upload button */}
       {currentAccount && (
         <div style={{
