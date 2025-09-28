@@ -12,6 +12,7 @@ import {
 import { Transaction } from "@mysten/sui/transactions";
 
 import AudioPlayer, { AudioPlayerHandle } from "@/components/AudioPlayer";
+import AddTrackForm from "@/components/AddTrackForm";
 import { useNetworkVariable } from "./networkConfig";
 
 // Local playlist used by the AudioPlayer (titles must match on-chain values)
@@ -53,6 +54,9 @@ export default function App() {
   // 🔓 Connect modal control + "retry after connect" memory
   const [showConnect, setShowConnect] = useState(false);
   const [pendingQuery, setPendingQuery] = useState<string | null>(null);
+
+  // Add track form modal control
+  const [showAddTrackForm, setShowAddTrackForm] = useState(false);
 
   // Guard against missing object ID in the query
   const canQueryObject = Boolean(jukeboxObjectId);
@@ -172,12 +176,33 @@ export default function App() {
         </div>
       )} */}
 
+      {/* Add Track button */}
+      <div className="mb-4 flex justify-center">
+        <button
+          onClick={() => setShowAddTrackForm(true)}
+          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+          disabled={waiting}
+        >
+          + Add New Track
+        </button>
+      </div>
+
       {/* Local player mirrors the on-chain title list */}
       <AudioPlayer
         ref={playerRef}
         playlist={PLAYLIST}
         onTrackSelect={handleSearch}
         isWaiting={waiting}
+      />
+
+      {/* Add Track Form Modal */}
+      <AddTrackForm
+        isOpen={showAddTrackForm}
+        onClose={() => setShowAddTrackForm(false)}
+        onSuccess={() => {
+          // Refetch the jukebox data to update the track list
+          refetch();
+        }}
       />
 
       {/* Wallet connect modal; lives anywhere under WalletProvider */}
