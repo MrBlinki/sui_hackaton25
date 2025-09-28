@@ -18,10 +18,10 @@ module jukebox::jukebox {
 
 	// --- Data types ---
 	use std::string::String;
-	use walrus::blob::Blob;
 
 	// --- Error codes ---
 	const E_INSUFFICIENT_PAYMENT: u64 = 1;
+	const E_TRACK_NOT_FOUND: u64 = 2;
 
 	// --- Constants ---
 	const ONE_SUI: u64 = 1_000_000_000;
@@ -35,23 +35,22 @@ module jukebox::jukebox {
 		collection: vector<Track>,
 	}
 
-	public struct Track has key, store, copy {
-		id: UID,
+	public struct Track has key, store {
+		id: UID, // Probably not used for now but could make artists owners of tracks later
 		artist: address,
-		blob: Blob,
+		title: String,
 	}
 
-	fun initCollection(ctx: &mut TxContext) : vector<Track> {
-		let collection = vector<Track>;
+	fun initCollection() : vector<Track> {
+		vector<Track>[]
+	}
 
-		let track = Track {
+	public fun addTrack(jukebox: &mut Jukebox, title: String, ctx: &mut TxContext) {
+		jukebox.collection.push_back(Track {
 			id: object::new(ctx),
-			artist: @artist,
-			blob: @blob,
-		};
-		collection.push_back(track);
-
-		collection
+			artist: ctx.sender(),
+			title,
+		});
 	}
 
 	fun init(ctx: &mut TxContext) {
@@ -79,16 +78,37 @@ module jukebox::jukebox {
 		// --- Check if payment is insufficient ---
 		assert!(paid >= jukebox.fee, E_INSUFFICIENT_PAYMENT);
 
+		// --- Search for track name in collection to retrieve artist address
+		let mut track_exists = false;
+		let mut track_artist: address = @0x0;
+		let mut i = 0;
+		let collection_length = vector::length(&jukebox.collection);
+
+		while (i < collection_length) {
+			let track = vector::borrow(&jukebox.collection, i);
+			if (track.title == new_track) {
+				track_exists = true;
+				track_artist = track.artist;
+				break;
+			};
+			i = i + 1;
+		};
+
+		// --- Check track has been found ---
+		assert!(track_exists, E_TRACK_NOT_FOUND);
+
 		// --- Check if change must be sent back ---
 		if (paid > jukebox.fee) {
 			let change = split(&mut payment, paid - jukebox.fee, ctx);
 			transfer::public_transfer(change, sender(ctx));
 		};
 
-		// --- Send payment to jukebox owner ---
+		// --- Send half of payment to artist of the track ---
+		let artist_share = split(&mut payment, paid / 2, ctx);
+		transfer::public_transfer(artist_share, track_artist);
+		// --- Send other half to owner of jukebox ---
 		transfer::public_transfer(payment, jukebox.owner);
 
-		// --- To implement : send payment to artist ---
 		jukebox.last_buyer = sender(ctx);
 		jukebox.current_track = new_track;
 	}
