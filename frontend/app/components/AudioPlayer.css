@@ -147,12 +147,13 @@
   left: 0;
   top: 50%;
   margin: -15% auto;
-  cursor: pointer;
+  cursor: default;
   opacity: 0.8;
   user-select: none;
   z-index: 1;
+  pointer-events: none; /* Disable all mouse interactions */
 }
-.audio-player__waveform:hover { opacity: 1; }
+.audio-player__waveform:hover { opacity: 0.8; }
 .audio-player__bar {
   position: absolute;
   top: 50%;

@@ -70,7 +70,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const [showVolume, setShowVolume] = useState(false);
   const [showWave, setShowWave] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [hasAutoStarted, setHasAutoStarted] = useState(false);
+  // hasAutoStarted removed - tracks only start via blockchain
 
   // Chat states
   const [chatMessage, setChatMessage] = useState('');
@@ -114,14 +114,8 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         const progressPercent = (currentTimeRef.current / sound.duration()) * 100;
         setProgress(Math.min(progressPercent, 100));
 
-        // Auto next track when reached end
-        if (currentTimeRef.current >= sound.duration()) {
-          if (timerIntervalRef.current) {
-            clearInterval(timerIntervalRef.current);
-            timerIntervalRef.current = undefined;
-          }
-          // We'll handle auto-next via the onend callback instead
-        }
+        // Let Howler handle track end naturally via onend callback
+        // Don't manually check duration to avoid premature timer stops
       }
     }, 1000);
   }, [currentIndex]);
@@ -310,9 +304,8 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     console.log('🔄 Metadata effect triggered, playlist length:', playlistRef.current.length);
 
-    // revoke previously created artwork URLs (prevents leaks when playlist changes)
-    createdObjectUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
-    createdObjectUrlsRef.current = [];
+    // Don't revoke URLs while playing to avoid interfering with current track
+    // Only revoke when component unmounts
 
     (async () => {
       const entries: Record<string, TrackMeta> = {};
@@ -353,14 +346,17 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
   // ---- Centralized Audio Manager ----
   const stopAllAudio = useCallback(() => {
-    // Only stop OTHER tracks, not the current one that might be playing
-    playlistRef.current.forEach((track, index) => {
-      if (track.howl && index !== currentIndex) {
+    // Stop ALL tracks to prevent conflicts
+    playlistRef.current.forEach((track) => {
+      if (track.howl) {
         track.howl.stop();
         // Don't unload, just stop - let them be reused
       }
     });
-  }, [currentIndex]);
+
+    // Also stop global Howler to ensure no audio leaks
+    Howler.stop();
+  }, []);
 
   // More aggressive cleanup only for track switching
   const stopCurrentAndCleanup = useCallback(() => {
@@ -387,112 +383,108 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     const data = playlistRef.current[playIndex];
     if (!data) return;
 
-    // Only stop other tracks, not necessarily the current one if it's the same
-    if (playIndex !== currentIndex) {
-      stopAllAudio();
-    }
+    // ALWAYS stop all audio first to prevent conflicts
+    stopAllAudio();
 
-    let sound = data.howl;
+    // Small delay to ensure cleanup is complete
+    setTimeout(() => {
+      let sound = data.howl;
 
-    if (!sound) {
-      setIsLoading(true);
+      if (!sound) {
+        setIsLoading(true);
 
-      // Handle Walrus tracks
-      if (data.isWalrus && data.walrusBlobId) {
-        console.log('🌊 Loading Walrus track:', data.title, data.walrusBlobId);
+        // Handle Walrus tracks
+        if (data.isWalrus && data.walrusBlobId) {
+          console.log('🌊 Loading Walrus track:', data.title, data.walrusBlobId);
 
-        // Use direct Walrus stream URL (faster than caching for jukebox use case)
-        const walrusUrl = getWalrusStreamUrl(data.walrusBlobId);
+          // Use direct Walrus stream URL (faster than caching for jukebox use case)
+          const walrusUrl = getWalrusStreamUrl(data.walrusBlobId);
 
-        sound = data.howl = new Howl({
-          src: [walrusUrl],
-          format: ['mp3', 'wav', 'ogg', 'm4a'], // Support multiple formats
-          onplay: () => {
-            setDuration(formatTime(Math.round(sound!.duration())));
-            setIsPlaying(true);
-            setIsLoading(false);
-            setShowWave(true);
-            startTimer();
-          },
-          onload: () => {
-            setIsLoading(false);
-            setShowWave(true);
-            setDuration(formatTime(Math.round(sound!.duration())));
-            console.log('✅ Walrus track loaded:', data.title);
-          },
-          onloaderror: (id, error) => {
-            console.error('❌ Failed to load Walrus track:', error);
-            setIsLoading(false);
-          },
-          onend: () => {
-            setIsPlaying(false);
-            setShowWave(false);
-            stopTimer();
-            resetTimer();
-            skip('next');
-          },
-          onstop: () => {
-            setIsPlaying(false);
-            setShowWave(false);
-            stopTimer();
-            resetTimer();
-          }
-        });
+          sound = data.howl = new Howl({
+            src: [walrusUrl],
+            format: ['mp3', 'wav', 'ogg', 'm4a'], // Support multiple formats
+            onplay: () => {
+              setDuration(formatTime(Math.round(sound!.duration())));
+              setIsPlaying(true);
+              setIsLoading(false);
+              setShowWave(true);
+              startTimer();
+            },
+            onload: () => {
+              setIsLoading(false);
+              setShowWave(true);
+              setDuration(formatTime(Math.round(sound!.duration())));
+              console.log('✅ Walrus track loaded:', data.title);
+            },
+            onloaderror: (id, error) => {
+              console.error('❌ Failed to load Walrus track:', error);
+              setIsLoading(false);
+            },
+            onend: () => {
+              // Jukebox mode: loop the same track until blockchain changes it
+              stopTimer();
+              resetTimer();
+              // Restart the same track immediately
+              sound!.play();
+            },
+            onstop: () => {
+              setIsPlaying(false);
+              setShowWave(false);
+              stopTimer();
+              resetTimer();
+            }
+          });
 
-      } else {
-        // Handle local tracks (existing logic)
-        sound = data.howl = new Howl({
-          src: [`/audio/${data.file}.mp3`],
-          onplay: () => {
-            setDuration(formatTime(Math.round(sound!.duration())));
-            setIsPlaying(true);
-            setIsLoading(false);
-            setShowWave(true);
-            startTimer();
-          },
-          onload: () => {
-            setIsLoading(false);
-            setShowWave(true);
-            setDuration(formatTime(Math.round(sound!.duration())));
-          },
-          onend: () => {
-            setIsPlaying(false);
-            setShowWave(false);
-            stopTimer();
-            resetTimer();
-            skip('next');
-          },
-          onstop: () => {
-            setIsPlaying(false);
-            setShowWave(false);
-            stopTimer();
-            resetTimer();
-          }
-        });
+        } else {
+          // Handle local tracks (existing logic)
+          sound = data.howl = new Howl({
+            src: [`/audio/${data.file}.mp3`],
+            onplay: () => {
+              setDuration(formatTime(Math.round(sound!.duration())));
+              setIsPlaying(true);
+              setIsLoading(false);
+              setShowWave(true);
+              startTimer();
+            },
+            onload: () => {
+              setIsLoading(false);
+              setShowWave(true);
+              setDuration(formatTime(Math.round(sound!.duration())));
+            },
+            onend: () => {
+              // Jukebox mode: loop the same track until blockchain changes it
+              stopTimer();
+              resetTimer();
+              // Restart the same track immediately
+              sound!.play();
+            },
+            onstop: () => {
+              setIsPlaying(false);
+              setShowWave(false);
+              stopTimer();
+              resetTimer();
+            }
+          });
+        }
       }
-    }
 
-    // Jukebox mode: only play, no pause
-    if (!sound.playing()) {
-      sound.play();
-      // startTimer() sera appelé par le callback onplay
-    }
+      // Jukebox mode: only play, no pause
+      if (!sound.playing()) {
+        sound.play();
+        // startTimer() sera appelé par le callback onplay
+      }
 
-    // Update duration for already loaded sounds
-    if (sound.state() === 'loaded') {
-      setDuration(formatTime(Math.round(sound.duration())));
-    }
+      // Update duration for already loaded sounds
+      if (sound.state() === 'loaded') {
+        setDuration(formatTime(Math.round(sound.duration())));
+      }
 
-    setCurrentIndex(playIndex);
-  }, [currentIndex, stopAllAudio, startTimer]);
+      setCurrentIndex(playIndex);
+    }, 100); // 100ms delay
+  }, [currentIndex, stopAllAudio, startTimer, stopTimer, resetTimer]);
 
 
-  const skip = useCallback((direction: 'next' | 'prev') => {
-    let index = direction === 'prev' ? currentIndex - 1 : currentIndex + 1;
-    if (index < 0) index = playlistRef.current.length - 1;
-    if (index >= playlistRef.current.length) index = 0;
-    skipTo(index);
-  }, [currentIndex]);
+  // Skip function removed - jukebox only changes tracks via blockchain
 
   const skipTo = useCallback((index: number) => {
     // Stop current track and clean up
@@ -754,17 +746,12 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   // Keep last seen on-chain choice to detect changes.
   const lastChainTrackRef = useRef<string | null>(null);
 
-  // Auto-start effect: play the first track when component mounts
-  useEffect(() => {
-    if (mounted && !hasAutoStarted && playlistRef.current.length > 0) {
-      setHasAutoStarted(true);
-      // Auto-start the first track
-      play(0);
-    }
-  }, [mounted, hasAutoStarted, play]);
+  // Jukebox mode: only start tracks via blockchain, no auto-start
 
+  // Chain polling for multi-user track synchronization
   useEffect(() => {
     let cancelled = false;
+    let intervalId: NodeJS.Timeout;
 
     const tick = async () => {
       try {
@@ -774,12 +761,16 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         const key = now.file || now.title;
         if (!key) return;
 
+        // Only process if this is a NEW track from blockchain
         if (key !== lastChainTrackRef.current) {
+          console.log('🔗 Blockchain track change detected:', key);
           lastChainTrackRef.current = key;
 
           // Try match by file first
           const byFileIdx = playlistRef.current.findIndex(s => s.file === key);
           if (byFileIdx !== -1) {
+            // Always skip to new track from blockchain (multi-user sync)
+            console.log('🎵 Switching to blockchain track by file:', key);
             skipTo(byFileIdx);
             return;
           }
@@ -789,24 +780,30 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             s => s.title.toLowerCase() === key.toLowerCase()
           );
           if (byTitleIdx !== -1) {
+            console.log('🎵 Switching to blockchain track by title:', key);
             skipTo(byTitleIdx);
             return;
           }
 
-          // Optional: if not found locally, refresh playlist from server here.
+          console.warn('⚠️ Track from blockchain not found in local playlist:', key);
         }
       } catch (e) {
         console.warn("Chain poll failed:", e);
       }
     };
 
-    // Run immediately, then every 5 seconds
-    tick();
-    const id = setInterval(tick, 5000);
+    // Start polling after a delay to avoid conflicts with initial load
+    const timeoutId = setTimeout(() => {
+      if (!cancelled) {
+        tick();
+        intervalId = setInterval(tick, 5000); // Poll every 5 seconds
+      }
+    }, 2000); // Wait 2 seconds before starting
 
     return () => {
       cancelled = true;
-      clearInterval(id);
+      clearTimeout(timeoutId);
+      if (intervalId) clearInterval(intervalId);
     };
   }, [playlist, skipTo]);
 
@@ -815,16 +812,26 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   return (
     <div className="audio-player" ref={rootRef}>
       {/* Artwork */}
-      {currentMeta?.pictureUrl && (
+      {currentMeta?.pictureUrl ? (
         <img
           className="audio-player__artwork"
           src={currentMeta.pictureUrl}
           alt={`${displayTitle} cover`}
           onLoad={() => console.log('✅ Artwork loaded successfully:', currentMeta.pictureUrl)}
-          onError={(e) => {
+          onError={async (e) => {
             console.error('❌ Artwork failed to load:', currentMeta.pictureUrl, e);
-            // Hide broken image
-            e.currentTarget.style.display = 'none';
+            // Create fallback artwork and replace the image
+            try {
+              const fallbackUrl = await createFallbackArtwork(displayTitle || currentSong?.title || 'Unknown');
+              if (fallbackUrl) {
+                e.currentTarget.src = fallbackUrl;
+              } else {
+                e.currentTarget.style.display = 'none';
+              }
+            } catch (err) {
+              console.error('Failed to create fallback artwork:', err);
+              e.currentTarget.style.display = 'none';
+            }
           }}
           style={{
             maxWidth: '100%',
@@ -832,6 +839,39 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             objectFit: 'cover'
           }}
         />
+      ) : (
+        // No artwork available, create fallback immediately
+        currentSong && (
+          <div
+            className="audio-player__artwork audio-player__artwork-fallback"
+            style={{
+              width: '100%',
+              height: '200px',
+              background: `linear-gradient(135deg, hsl(${Math.abs(currentSong.title.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % 360}, 70%, 65%), hsl(${(Math.abs(currentSong.title.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) + 120) % 360}, 60%, 45%))`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '48px',
+              color: 'rgba(255, 255, 255, 0.9)',
+              position: 'relative'
+            }}
+          >
+            ♫
+            <div style={{
+              position: 'absolute',
+              bottom: '10px',
+              left: '50%',
+              transform: 'translateX(-50%)',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              textAlign: 'center',
+              color: 'rgba(255, 255, 255, 0.8)',
+              textShadow: '1px 1px 2px rgba(0,0,0,0.5)'
+            }}>
+              {(currentSong.title.length > 20 ? currentSong.title.slice(0, 17) + '...' : currentSong.title).toUpperCase()}
+            </div>
+          </div>
+        )
       )}
 
       {/* Top info */}
@@ -861,7 +901,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
       {/* Progress / Wave */}
       <div className="audio-player__waveform" ref={waveformRef}>
-        {showWave && mounted ? (
+        {showWave && mounted && (
           <SiriWave
             width={typeof window !== 'undefined' ? window.innerWidth : 0}
             height={typeof window !== 'undefined' ? window.innerHeight * 0.3 : 0}
@@ -871,10 +911,6 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
             frequency={2}
             autostart
           />
-        ) : (
-          <div className="audio-player__bar">
-            <div className="audio-player__progress" style={{ width: `${progress}%` }} />
-          </div>
         )}
       </div>
 

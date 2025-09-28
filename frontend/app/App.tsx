@@ -144,29 +144,59 @@ export default function App() {
     return allTracks;
   }, [walrusTracks]);
 
+  // Track change debounce to prevent rapid switching
+  const trackChangeTimeoutRef = useRef<NodeJS.Timeout>();
+
+  // Track the last processed track to avoid re-triggering the same track
+  const lastProcessedTrackRef = useRef<string | null>(null);
+
   // Auto-play locally whenever the on-chain current_track changes
   useEffect(() => {
     const title = fields?.current_track;
     if (title && playerRef.current) {
-      console.log('🎵 Chain says play:', title);
-      
-      // Check if this is a Walrus track in our unified list
-      const walrusTrack = walrusTracks.find(track => track.title.toLowerCase() === title.toLowerCase());
 
-      if (walrusTrack) {
-        // It's a Walrus track - pass the blob ID to the player
-        console.log('🌊 Playing Walrus track:', walrusTrack);
-        playerRef.current.playWalrusTrack(title, walrusTrack.walrus_blob_id);
-      } else {
-        // It's a local track - use existing logic
-        console.log('🎶 Playing local track:', title);
-        playerRef.current.playByTitle(title);
+      // CRUCIAL: Don't re-trigger if it's the same track
+      if (title === lastProcessedTrackRef.current) {
+        console.log('⏭️ App: Skipping re-trigger for same track:', title);
+        return;
       }
 
-      // Clear chat messages when track changes and update timestamp
-      setChatMessages([]);
-      setLastTrackChangeTime(Date.now());
+      lastProcessedTrackRef.current = title;
+
+      // Clear any pending track change
+      if (trackChangeTimeoutRef.current) {
+        clearTimeout(trackChangeTimeoutRef.current);
+      }
+
+      // Debounce track changes (500ms delay)
+      trackChangeTimeoutRef.current = setTimeout(() => {
+        console.log('🎵 App: Chain says play:', title);
+
+        // Check if this is a Walrus track in our unified list
+        const walrusTrack = walrusTracks.find(track => track.title.toLowerCase() === title.toLowerCase());
+
+        if (walrusTrack) {
+          // It's a Walrus track - pass the blob ID to the player
+          console.log('🌊 Playing Walrus track:', walrusTrack);
+          playerRef.current?.playWalrusTrack(title, walrusTrack.walrus_blob_id);
+        } else {
+          // It's a local track - use existing logic
+          console.log('🎶 Playing local track:', title);
+          playerRef.current?.playByTitle(title);
+        }
+
+        // Clear chat messages when track changes and update timestamp
+        setChatMessages([]);
+        setLastTrackChangeTime(Date.now());
+      }, 500);
     }
+
+    // Cleanup timeout on unmount or dependency change
+    return () => {
+      if (trackChangeTimeoutRef.current) {
+        clearTimeout(trackChangeTimeoutRef.current);
+      }
+    };
   }, [fields?.current_track, walrusTracks]);
 
   // After the user connects, if we had a pending search, run it once.
@@ -466,16 +496,24 @@ export default function App() {
       try {
         const messages = await fetchChatMessages();
         if (!cancelled) {
-          setChatMessages(messages);
+          // Only update if messages have actually changed
+          setChatMessages(prev => {
+            if (prev.length !== messages.length ||
+                prev.some((msg, i) => msg.id !== messages[i]?.id)) {
+              console.log('💬 Chat messages updated:', messages.length);
+              return messages;
+            }
+            return prev;
+          });
         }
       } catch (e) {
         console.warn("Chat messages poll failed:", e);
       }
     };
 
-    // Poll immediately, then every 10 seconds
+    // Poll immediately, then every 15 seconds (reduced frequency)
     pollChatMessages();
-    const id = setInterval(pollChatMessages, 10000);
+    const id = setInterval(pollChatMessages, 15000);
 
     return () => {
       cancelled = true;
