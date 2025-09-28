@@ -35,12 +35,7 @@ export type AudioPlayerHandle = {
   playByTitle: (title: string) => void;
 };
 
-const defaultPlaylist: Song[] = [
-  { title: 'Horizon', file: 'horizon' },
-  { title: 'skelet',  file: 'inside_out' },
-  { title: 'wax',     file: 'wax' },
-  { title: 'atmosphere', file: 'atmosphere' }
-];
+const defaultPlaylist: Song[] = [];
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 ({ playlist = defaultPlaylist, onTrackSelect, isWaiting = false }, ref) => {
@@ -126,7 +121,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       const pic = mm.common.picture?.[0];
       let pictureUrl: string | undefined;
       if (pic?.data) {
-        const coverBlob = new Blob([pic.data], { type: pic.format || 'image/jpeg' });
+        const coverBlob = new Blob([pic.data as BlobPart], { type: pic.format || 'image/jpeg' });
         pictureUrl = URL.createObjectURL(coverBlob);
         createdObjectUrlsRef.current.push(pictureUrl);
       }
@@ -472,6 +467,20 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   }, [playlist, skipTo]);
 
   // ====== /CHAIN POLLING ======
+
+  // Si la playlist est vide, afficher un message
+  if (playlistRef.current.length === 0) {
+    return (
+      <div className="audio-player" ref={rootRef}>
+        <div className="audio-player__empty">
+          <div className="audio-player__empty-message">
+            <h3>Playlist vide</h3>
+            <p>Ajoutez des pistes avec le bouton "+ Add New Track" pour commencer à écouter de la musique.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="audio-player" ref={rootRef}>

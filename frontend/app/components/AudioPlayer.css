@@ -267,6 +267,33 @@
   display: block;
 }
 
+/* Empty playlist message */
+.audio-player__empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: var(--text);
+  width: 80%;
+  max-width: 500px;
+}
+
+.audio-player__empty-message h3 {
+  font-size: 48px;
+  font-weight: 300;
+  margin-bottom: 24px;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.33);
+}
+
+.audio-player__empty-message p {
+  font-size: 24px;
+  font-weight: 300;
+  line-height: 1.5;
+  opacity: 0.8;
+  text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.33);
+}
+
 /* Animations */
 @keyframes sk-scaleout { 0% { transform: scale(0); } 100% { transform: scale(1); opacity: 0; } }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }

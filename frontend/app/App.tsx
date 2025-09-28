@@ -15,13 +15,11 @@ import AudioPlayer, { AudioPlayerHandle } from "@/components/AudioPlayer";
 import AddTrackForm from "@/components/AddTrackForm";
 import { useNetworkVariable } from "./networkConfig";
 
-// Local playlist used by the AudioPlayer (titles must match on-chain values)
-const PLAYLIST = [
-  { title: 'Horizon', file: 'horizon' },
-  { title: 'skelet',  file: 'inside_out' },
-  { title: 'wax',  file: 'wax' },
-  { title: 'atmosphere',  file: 'atmosphere' }
-];
+// Type pour les tracks de la playlist
+type PlaylistTrack = {
+  title: string;
+  file: string;
+};
 
 // ---- Types & helpers to read your Move object ----
 type JukeboxFields = {
@@ -58,6 +56,9 @@ export default function App() {
   // Add track form modal control
   const [showAddTrackForm, setShowAddTrackForm] = useState(false);
 
+  // Playlist state - démarre vide, les tracks sont ajoutées via AddTrackForm
+  const [playlist, setPlaylist] = useState<PlaylistTrack[]>([]);
+
   // Guard against missing object ID in the query
   const canQueryObject = Boolean(jukeboxObjectId);
 
@@ -68,7 +69,6 @@ export default function App() {
       id: jukeboxObjectId || "",
       options: { showContent: true },
     },
-    // @ts-expect-error: the hook accepts a 3rd "options" param in runtime; this silences TS
     { enabled: canQueryObject }
   );
 
@@ -164,6 +164,14 @@ export default function App() {
     await doChangeTrack(newTitle);
   };
 
+  // Function to add a new track to the playlist
+  const handleAddTrack = (title: string, file: string) => {
+    setPlaylist(prevPlaylist => [
+      ...prevPlaylist,
+      { title, file }
+    ]);
+  };
+
   return (
     <div className="bg-white text-black">
       {isPending && <div className="text-sm text-muted-foreground">Loading…</div>}
@@ -190,7 +198,7 @@ export default function App() {
       {/* Local player mirrors the on-chain title list */}
       <AudioPlayer
         ref={playerRef}
-        playlist={PLAYLIST}
+        playlist={playlist}
         onTrackSelect={handleSearch}
         isWaiting={waiting}
       />
@@ -199,7 +207,9 @@ export default function App() {
       <AddTrackForm
         isOpen={showAddTrackForm}
         onClose={() => setShowAddTrackForm(false)}
-        onSuccess={() => {
+        onSuccess={(title: string, file: string) => {
+          // Add the track to the local playlist
+          handleAddTrack(title, file);
           // Refetch the jukebox data to update the track list
           refetch();
         }}

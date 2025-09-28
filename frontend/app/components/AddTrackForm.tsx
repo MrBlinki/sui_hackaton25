@@ -8,7 +8,7 @@ import { useNetworkVariable } from "../networkConfig";
 interface AddTrackFormProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess?: () => void;
+  onSuccess?: (title: string, file: string) => void;
 }
 
 const AddTrackForm: React.FC<AddTrackFormProps> = ({ isOpen, onClose, onSuccess }) => {
@@ -100,7 +100,7 @@ const AddTrackForm: React.FC<AddTrackFormProps> = ({ isOpen, onClose, onSuccess 
             
             // Call success callback and close after a short delay
             setTimeout(() => {
-              onSuccess?.();
+              onSuccess?.(title.trim(), filename.replace('.mp3', ''));
               handleClose();
             }, 1500);
           },
