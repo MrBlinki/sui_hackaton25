@@ -202,21 +202,71 @@
   inset: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  align-items: center;
+  justify-content: flex-start;
+  align-items: flex-start;
+  padding: 40px 60px 40px 80px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+}
+
+.audio-player__list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.audio-player__list::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.audio-player__list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 3px;
+}
+
+.audio-player__list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.6);
 }
 .audio-player__list-song {
   width: 100%;
-  height: 120px;
-  font-size: 50px;
-  line-height: 120px;
-  text-align: center;
-  font-weight: bold;
+  max-width: 450px;
+  margin: 8px 0;
+  padding: 12px 20px;
+  font-size: 18px;
+  line-height: 1.4;
+  text-align: left;
+  font-weight: 500;
   color: var(--text);
   text-shadow: 1px 1px 2px rgba(0,0,0,0.33);
   cursor: pointer;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+  backdrop-filter: blur(5px);
 }
-.audio-player__list-song:hover { background-color: rgba(255,255,255,0.1); }
+
+.audio-player__list-song:hover {
+  background: rgba(255, 255, 255, 0.15);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.audio-player__list-song:active {
+  transform: translateY(0);
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.audio-player__list-song.current {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+}
+
+.audio-player__list-song.current:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
 
 /* Volume controls */
 .audio-player__volume-controls {
@@ -449,7 +499,28 @@
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.3));
 }
 
+/* Walrus Panel Scrollbar */
+.walrus-panel-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.walrus-panel-scroll::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+
+.walrus-panel-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 3px;
+}
+
+.walrus-panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.6);
+}
+
 /* Animations */
 @keyframes sk-scaleout { 0% { transform: scale(0); } 100% { transform: scale(1); opacity: 0; } }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes slideInLeft { from { left: -280px; } to { left: 0px; } }
+@keyframes slideOutLeft { from { left: 0px; } to { left: -280px; } }

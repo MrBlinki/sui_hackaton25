@@ -97,10 +97,13 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   };
 
   const startTimer = useCallback(() => {
+    // Don't start timer if one is already running
     if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
+      console.log('⏰ Timer already running, not starting new one');
+      return;
     }
 
+    console.log('▶️ Starting timer');
     timerIntervalRef.current = setInterval(() => {
       currentTimeRef.current += 1;
       setTimer(formatTime(currentTimeRef.current));
@@ -146,7 +149,8 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       const pic = mm.common.picture?.[0];
       let pictureUrl: string | undefined;
       if (pic?.data) {
-        const coverBlob = new Blob([pic.data], { type: pic.format || 'image/jpeg' });
+        const uint8Array = new Uint8Array(pic.data);
+        const coverBlob = new Blob([uint8Array], { type: pic.format || 'image/jpeg' });
         pictureUrl = URL.createObjectURL(coverBlob);
         createdObjectUrlsRef.current.push(pictureUrl);
       }
@@ -160,6 +164,81 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     } catch (e) {
       console.warn('Metadata parse failed for', mp3Url, e);
       return {};
+    }
+  }, []);
+
+  // ---- Create fallback artwork ----
+  const createFallbackArtwork = useCallback(async (title: string): Promise<string> => {
+    try {
+      console.log('🎨 Creating fallback artwork for:', title);
+      
+      // Create a canvas as fallback artwork
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      
+      canvas.width = 300;
+      canvas.height = 300;
+      
+      // Generate deterministic colors based on title
+      const hash = title.split('').reduce((a, b) => {
+        a = ((a << 5) - a) + b.charCodeAt(0);
+        return a & a;
+      }, 0);
+      
+      const hue1 = Math.abs(hash) % 360;
+      const hue2 = (hue1 + 120) % 360;
+      
+      // Create radial gradient
+      const gradient = ctx.createRadialGradient(150, 150, 0, 150, 150, 150);
+      gradient.addColorStop(0, `hsl(${hue1}, 70%, 65%)`);
+      gradient.addColorStop(0.7, `hsl(${hue2}, 60%, 45%)`);
+      gradient.addColorStop(1, `hsl(${hue1}, 80%, 25%)`);
+      
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 300, 300);
+      
+      // Add some geometric patterns
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+      for (let i = 0; i < 5; i++) {
+        const x = (Math.abs(hash + i * 123) % 200) + 50;
+        const y = (Math.abs(hash + i * 456) % 200) + 50;
+        const radius = (Math.abs(hash + i * 789) % 30) + 10;
+        
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      
+      // Add main music icon
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.font = 'bold 80px Arial';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('♫', 150, 150);
+      
+      // Add title text (truncated)
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      ctx.font = 'bold 14px Arial';
+      const truncatedTitle = title.length > 20 ? title.slice(0, 17) + '...' : title;
+      ctx.fillText(truncatedTitle.toUpperCase(), 150, 220);
+      
+      // Convert to blob URL
+      return new Promise((resolve) => {
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const url = URL.createObjectURL(blob);
+            createdObjectUrlsRef.current.push(url);
+            console.log('✅ Created fallback artwork URL:', url);
+            resolve(url);
+          } else {
+            resolve('');
+          }
+        }, 'image/png');
+      });
+    } catch (error) {
+      console.warn('❌ Failed to create fallback artwork:', error);
+      return '';
     }
   }, []);
 
@@ -229,6 +308,8 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   useEffect(() => {
     let cancelled = false;
 
+    console.log('🔄 Metadata effect triggered, playlist length:', playlistRef.current.length);
+
     // revoke previously created artwork URLs (prevents leaks when playlist changes)
     createdObjectUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
     createdObjectUrlsRef.current = [];
@@ -236,10 +317,33 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     (async () => {
       const entries: Record<string, TrackMeta> = {};
       for (const s of playlistRef.current) {
-        const url = `/audio/${s.file}.mp3`;
-        const m = await extractMetadata(url);
-        if (cancelled) return;
-        entries[s.file] = m;
+        if (s.isWalrus && s.walrusBlobId) {
+          // For Walrus tracks, try to extract metadata from the Walrus blob
+          try {
+            const walrusUrl = getWalrusStreamUrl(s.walrusBlobId);
+            const m = await extractMetadata(walrusUrl);
+            if (cancelled) return;
+            entries[s.file] = {
+              ...m,
+              title: m.title || s.title, // Fallback to song title if no metadata
+              artist: m.artist || 'Unknown Artist'
+            };
+          } catch (error) {
+            console.warn('Failed to extract Walrus metadata for', s.title, error);
+            // Fallback metadata for Walrus tracks
+            entries[s.file] = {
+              title: s.title,
+              artist: 'Walrus Track',
+              album: 'Decentralized Music'
+            };
+          }
+        } else {
+          // Local tracks
+          const url = `/audio/${s.file}.mp3`;
+          const m = await extractMetadata(url);
+          if (cancelled) return;
+          entries[s.file] = m;
+        }
       }
       if (!cancelled) setMetaByFile(entries);
     })();
@@ -247,11 +351,46 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     return () => { cancelled = true; };
   }, [playlist, extractMetadata]);
 
+  // ---- Centralized Audio Manager ----
+  const stopAllAudio = useCallback(() => {
+    // Only stop OTHER tracks, not the current one that might be playing
+    playlistRef.current.forEach((track, index) => {
+      if (track.howl && index !== currentIndex) {
+        track.howl.stop();
+        // Don't unload, just stop - let them be reused
+      }
+    });
+  }, [currentIndex]);
+
+  // More aggressive cleanup only for track switching
+  const stopCurrentAndCleanup = useCallback(() => {
+    // Stop current track
+    const currentTrack = playlistRef.current[currentIndex];
+    if (currentTrack?.howl) {
+      currentTrack.howl.stop();
+    }
+    
+    // Clear timers and states
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+      timerIntervalRef.current = undefined;
+    }
+    
+    setIsPlaying(false);
+    setShowWave(false);
+    setIsLoading(false);
+  }, [currentIndex]);
+
   // ---- Play controls ----
   const play = useCallback((index?: number) => {
     const playIndex = typeof index === 'number' ? index : currentIndex;
     const data = playlistRef.current[playIndex];
     if (!data) return;
+
+    // Only stop other tracks, not necessarily the current one if it's the same
+    if (playIndex !== currentIndex) {
+      stopAllAudio();
+    }
 
     let sound = data.howl;
 
@@ -345,7 +484,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     }
 
     setCurrentIndex(playIndex);
-  }, [currentIndex]);
+  }, [currentIndex, stopAllAudio, startTimer]);
 
 
   const skip = useCallback((direction: 'next' | 'prev') => {
@@ -356,13 +495,13 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   }, [currentIndex]);
 
   const skipTo = useCallback((index: number) => {
-    const currentSound = playlistRef.current[currentIndex]?.howl;
-    if (currentSound) currentSound.stop();
-    stopTimer();
+    // Stop current track and clean up
+    stopCurrentAndCleanup();
     resetTimer();
     setProgress(0);
+    
     play(index);
-  }, [currentIndex, play, stopTimer, resetTimer]);
+  }, [play, stopCurrentAndCleanup, resetTimer]);
 
 
   const handleVolumeChange = useCallback((vol: number) => {
@@ -372,6 +511,25 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
   const togglePlaylist = () => setShowPlaylist(!showPlaylist);
   const toggleVolume   = () => setShowVolume(!showVolume);
+
+  // Handle ESC key to close overlays
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (showPlaylist) {
+          setShowPlaylist(false);
+        }
+        if (showVolume) {
+          setShowVolume(false);
+        }
+      }
+    };
+
+    if (showPlaylist || showVolume) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [showPlaylist, showVolume]);
 
   // Current song reference for chat
   const currentSong = playlistRef.current[currentIndex];
@@ -437,8 +595,24 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   useEffect(() => {
     return () => {
       if (animationRef.current) cancelAnimationFrame(animationRef.current);
-      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
-      playlistRef.current.forEach(s => s.howl?.unload());
+      
+      // Stop all audio completely on unmount
+      Howler.stop();
+      
+      // Clean up all instances
+      playlistRef.current.forEach(track => {
+        if (track.howl) {
+          track.howl.stop();
+          track.howl.unload();
+        }
+      });
+      
+      // Clear timers
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+      
+      // Clean up created URLs
       createdObjectUrlsRef.current.forEach(u => URL.revokeObjectURL(u));
       createdObjectUrlsRef.current = [];
     };
@@ -460,27 +634,46 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const playWalrusTrack = useCallback(async (title: string, blobId: string) => {
     console.log('🌊 Playing Walrus track:', title, blobId);
 
-    // Create a temporary Walrus track in the playlist
-    const walrusTrack: Song = {
-      title,
-      file: blobId, // Use blob ID as file identifier
-      isWalrus: true,
-      walrusBlobId: blobId,
-    };
+    // First, ensure metadata exists
+    if (!metaByFile[blobId]) {
+      try {
+        const walrusUrl = getWalrusStreamUrl(blobId);
+        const metadata = await extractMetadata(walrusUrl);
+        
+        setMetaByFile(prev => ({
+          ...prev,
+          [blobId]: {
+            ...metadata,
+            title: metadata.title || title,
+            artist: metadata.artist || 'Walrus Artist'
+          }
+        }));
+        
+        console.log('🎨 Extracted Walrus metadata:', metadata);
+      } catch (error) {
+        console.warn('Failed to extract Walrus metadata:', error);
+        setMetaByFile(prev => ({
+          ...prev,
+          [blobId]: {
+            title,
+            artist: 'Walrus Track',
+            album: 'Decentralized Music'
+          }
+        }));
+      }
+    }
 
-    // Add or update the track in the playlist
-    const existingIndex = playlistRef.current.findIndex(song => song.title === title);
+    // Find and play the track
+    const existingIndex = playlistRef.current.findIndex(
+      song => song.title.toLowerCase() === title.toLowerCase()
+    );
+    
     if (existingIndex !== -1) {
-      // Update existing track to be Walrus-enabled
-      playlistRef.current[existingIndex] = { ...playlistRef.current[existingIndex], ...walrusTrack };
       skipTo(existingIndex);
     } else {
-      // Add new track temporarily
-      playlistRef.current.push(walrusTrack);
-      const newIndex = playlistRef.current.length - 1;
-      skipTo(newIndex);
+      console.warn(`Walrus track "${title}" not found in current playlist`);
     }
-  }, [skipTo]);
+  }, [skipTo, extractMetadata, metaByFile]);
 
   useImperativeHandle(ref, () => ({ playByTitle, playWalrusTrack }), [playByTitle, playWalrusTrack]);
 
@@ -627,6 +820,17 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
           className="audio-player__artwork"
           src={currentMeta.pictureUrl}
           alt={`${displayTitle} cover`}
+          onLoad={() => console.log('✅ Artwork loaded successfully:', currentMeta.pictureUrl)}
+          onError={(e) => {
+            console.error('❌ Artwork failed to load:', currentMeta.pictureUrl, e);
+            // Hide broken image
+            e.currentTarget.style.display = 'none';
+          }}
+          style={{
+            maxWidth: '100%',
+            height: 'auto',
+            objectFit: 'cover'
+          }}
         />
       )}
 
@@ -678,10 +882,36 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
       {showPlaylist && (
         <div className="audio-player__playlist" onClick={togglePlaylist}>
           <div className="audio-player__list">
+            {/* ESC hint */}
+            <div style={{
+              position: 'absolute',
+              top: '20px',
+              right: '20px',
+              color: 'var(--text-dim)',
+              fontSize: '12px',
+              opacity: 0.7
+            }}>
+              Press ESC to close
+            </div>
+            
+            {/* Playlist title */}
+            <h3 style={{
+              color: 'var(--text)',
+              fontSize: '24px',
+              fontWeight: 'bold',
+              marginBottom: '20px',
+              textAlign: 'left',
+              textShadow: '2px 2px 4px rgba(0,0,0,0.5)',
+              width: '100%',
+              maxWidth: '450px'
+            }}>
+              🎵 Playlist ({playlistRef.current.length} tracks)
+            </h3>
+            
             {playlistRef.current.map((song, i) => (
               <div
                 key={i}
-                className={`audio-player__list-song ${isWaiting ? 'waiting' : ''}`}
+                className={`audio-player__list-song ${isWaiting ? 'waiting' : ''} ${i === currentIndex ? 'current' : ''}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (onTrackSelect && !isWaiting) {
@@ -695,11 +925,44 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
                 }}
                 style={{
                   opacity: isWaiting ? 0.5 : 1,
-                  cursor: isWaiting ? 'not-allowed' : 'pointer'
+                  cursor: isWaiting ? 'not-allowed' : 'pointer',
+                  borderLeft: i === currentIndex ? '4px solid var(--text)' : '4px solid transparent'
                 }}
               >
-                {metaByFile[song.file]?.title || song.title}
-                {isWaiting && i === currentIndex && <span> (⏳ Transaction en cours...)</span>}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {i === currentIndex && (
+                    <span style={{ fontSize: '14px' }}>
+                      {isPlaying ? '▶️' : '⏸️'}
+                    </span>
+                  )}
+                  <div>
+                    <div style={{ fontWeight: i === currentIndex ? 'bold' : '500' }}>
+                      {metaByFile[song.file]?.title || song.title}
+                    </div>
+                    {metaByFile[song.file]?.artist && (
+                      <div style={{ 
+                        fontSize: '14px', 
+                        opacity: 0.7, 
+                        marginTop: '2px' 
+                      }}>
+                        {metaByFile[song.file].artist}
+                      </div>
+                    )}
+                    {song.isWalrus && (
+                      <div style={{ 
+                        fontSize: '11px', 
+                        opacity: 0.5, 
+                        marginTop: '1px',
+                        color: '#4CAF50'
+                      }}>
+                        🌊 Walrus
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {isWaiting && i === currentIndex && (
+                  <span style={{ fontSize: '12px', opacity: 0.7 }}> ⏳ Transaction...</span>
+                )}
               </div>
             ))}
           </div>

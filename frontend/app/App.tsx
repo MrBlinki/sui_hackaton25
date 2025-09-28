@@ -75,6 +75,21 @@ export default function App() {
   const [showUpload, setShowUpload] = useState(false);
   const [uploadingTrack, setUploadingTrack] = useState(false);
   const [walrusTracks, setWalrusTracks] = useState<WalrusTrack[]>([]);
+  const [showWalrusPanel, setShowWalrusPanel] = useState(false);
+
+  // Handle ESC key to close upload modal
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && showUpload) {
+        setShowUpload(false);
+      }
+    };
+
+    if (showUpload) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [showUpload]);
 
   // 🔓 Connect modal control + "retry after connect" memory
   const [showConnect, setShowConnect] = useState(false);
@@ -90,24 +105,61 @@ export default function App() {
       id: jukeboxObjectId || "",
       options: { showContent: true },
     },
-    // @ts-expect-error: the hook accepts a 3rd "options" param in runtime; this silences TS
     { enabled: canQueryObject }
   );
 
   const fields = useMemo(() => getJukeboxFields(data?.data), [data]);
 
+  // Create unified playlist with FIFO rotation (max 20 tracks) - no duplicates
+  const unifiedPlaylist = useMemo(() => {
+    const localTracks = PLAYLIST.map(track => ({ ...track, isWalrus: false }));
+    const walrusPlaylistTracks = walrusTracks.map(track => ({
+      title: track.title,
+      file: track.walrus_blob_id, // Use blob ID as file identifier
+      isWalrus: true,
+      walrusBlobId: track.walrus_blob_id
+    }));
+    
+    // Combine tracks and remove duplicates by title (Walrus tracks override local ones)
+    const trackMap = new Map();
+    
+    // Add local tracks first
+    localTracks.forEach(track => {
+      trackMap.set(track.title.toLowerCase(), track);
+    });
+    
+    // Add Walrus tracks (will override local tracks with same title)
+    walrusPlaylistTracks.forEach(track => {
+      trackMap.set(track.title.toLowerCase(), track);
+    });
+    
+    const allTracks = Array.from(trackMap.values());
+    const MAX_TRACKS = 20;
+    
+    if (allTracks.length > MAX_TRACKS) {
+      // Keep the newest tracks (FIFO: newest Walrus tracks replace oldest local tracks)
+      return allTracks.slice(-MAX_TRACKS);
+    }
+    
+    return allTracks;
+  }, [walrusTracks]);
+
   // Auto-play locally whenever the on-chain current_track changes
   useEffect(() => {
     const title = fields?.current_track;
     if (title && playerRef.current) {
-      // Check if this is a Walrus track
-      const walrusTrack = walrusTracks.find(track => track.title === title);
+      console.log('🎵 Chain says play:', title);
+      
+      // Check if this is a Walrus track in our unified list
+      const walrusTrack = walrusTracks.find(track => track.title.toLowerCase() === title.toLowerCase());
 
       if (walrusTrack) {
         // It's a Walrus track - pass the blob ID to the player
+        console.log('🌊 Playing Walrus track:', walrusTrack);
         playerRef.current.playWalrusTrack(title, walrusTrack.walrus_blob_id);
       } else {
         // It's a local track - use existing logic
+        console.log('🎶 Playing local track:', title);
         playerRef.current.playByTitle(title);
       }
 
@@ -247,9 +299,26 @@ export default function App() {
     }
   }, [suiClient, jukeboxPackageId]);
 
-  // Load Walrus tracks on component mount
+  // Load Walrus tracks on component mount and periodically
   useEffect(() => {
-    void fetchWalrusTracks();
+    let cancelled = false;
+
+    const pollWalrusTracks = async () => {
+      try {
+        await fetchWalrusTracks();
+      } catch (e) {
+        console.warn("Walrus tracks poll failed:", e);
+      }
+    };
+
+    // Load immediately, then every 15 seconds
+    pollWalrusTracks();
+    const id = setInterval(pollWalrusTracks, 15000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
   }, [fetchWalrusTracks]);
 
   // Chat message handler (micro-transaction with event)
@@ -376,6 +445,10 @@ export default function App() {
 
     // Add to blockchain
     await addTrackToJukebox(blobId, metadata);
+    
+    // Show Walrus panel briefly to highlight the new track
+    setShowWalrusPanel(true);
+    setTimeout(() => setShowWalrusPanel(false), 3000);
   };
 
   // Handle upload error
@@ -422,6 +495,22 @@ export default function App() {
         </div>
       )} */}
 
+      {/* Hover zone for Walrus panel trigger */}
+      {walrusTracks.length > 0 && (
+        <div 
+          style={{
+            position: 'fixed',
+            left: 0,
+            top: 0,
+            width: '20px',
+            height: '100vh',
+            zIndex: 1400,
+            cursor: 'pointer'
+          }}
+          onMouseEnter={() => setShowWalrusPanel(true)}
+        />
+      )}
+
       {/* Upload button */}
       {currentAccount && (
         <div style={{
@@ -440,22 +529,40 @@ export default function App() {
 
       {/* Upload modal */}
       {showUpload && (
-        <div style={{
-          position: 'absolute',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.8)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 2000,
-          backdropFilter: 'blur(10px)'
-        }}>
+        <div 
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(0, 0, 0, 0.8)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 2000,
+            backdropFilter: 'blur(10px)'
+          }}
+          onClick={() => setShowUpload(false)}
+        >
+          {/* ESC hint */}
           <div style={{
-            maxWidth: '500px',
-            width: '90%',
-            maxHeight: '80vh',
-            overflow: 'auto'
+            position: 'absolute',
+            top: '20px',
+            right: '20px',
+            color: 'rgba(255, 255, 255, 0.7)',
+            fontSize: '12px'
           }}>
+            Press ESC to close
+          </div>
+          
+          <div 
+            style={{
+              maxWidth: '500px',
+              width: '90%',
+              maxHeight: '80vh',
+              overflow: 'auto',
+              position: 'relative'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <TrackUpload
               onUploadSuccess={handleUploadSuccess}
               onUploadError={handleUploadError}
@@ -465,48 +572,108 @@ export default function App() {
         </div>
       )}
 
-      {/* Walrus tracks list */}
+      {/* Walrus Tracks Panel - Sliding */}
       {walrusTracks.length > 0 && (
-        <div style={{
-          position: 'absolute',
-          bottom: '280px',
-          left: '10px',
-          background: 'rgba(255, 255, 255, 0.1)',
-          borderRadius: '8px',
-          padding: '12px',
-          maxWidth: '300px',
-          maxHeight: '200px',
-          overflow: 'auto',
-          backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255, 255, 255, 0.2)',
-          zIndex: 1000
-        }}>
-          <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 'bold', color: '#fff' }}>
+        <div 
+          style={{
+            position: 'fixed',
+            top: '50%',
+            left: showWalrusPanel ? '0px' : '-280px',
+            transform: 'translateY(-50%)',
+            width: '300px',
+            maxHeight: '400px',
+            background: 'rgba(255, 255, 255, 0.1)',
+            borderRadius: '0 12px 12px 0',
+            padding: '16px',
+            backdropFilter: 'blur(15px)',
+            border: '1px solid rgba(255, 255, 255, 0.2)',
+            borderLeft: 'none',
+            zIndex: 1500,
+            transition: 'left 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+            boxShadow: '4px 0 20px rgba(0, 0, 0, 0.3)'
+          }}
+          onMouseEnter={() => setShowWalrusPanel(true)}
+          onMouseLeave={() => setShowWalrusPanel(false)}
+        >
+          {/* Handle visible when closed */}
+          <div style={{
+            position: 'absolute',
+            right: '-20px',
+            top: '50%',
+            transform: 'translateY(-50%)',
+            width: '20px',
+            height: '60px',
+            background: 'rgba(255, 255, 255, 0.15)',
+            borderRadius: '0 8px 8px 0',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            fontSize: '12px',
+            color: 'white',
+            writingMode: 'vertical-rl',
+            textOrientation: 'mixed'
+          }}>
+            🌊
+          </div>
+          
+          <h4 style={{ 
+            margin: '0 0 12px 0', 
+            fontSize: '14px', 
+            fontWeight: 'bold', 
+            color: '#fff',
+            textAlign: 'center',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.2)',
+            paddingBottom: '8px'
+          }}>
             🌊 Walrus Tracks ({walrusTracks.length})
           </h4>
-          {walrusTracks.slice(0, 5).map((track, index) => (
-            <div key={track.walrus_blob_id} style={{
-              fontSize: '11px',
-              padding: '4px 6px',
-              margin: '2px 0',
-              background: 'rgba(255, 255, 255, 0.1)',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              color: '#fff'
-            }}
-            onClick={() => handleSearch(track.title)}
-            >
-              <div style={{ fontWeight: 'bold' }}>{track.title}</div>
-              <div style={{ opacity: 0.7 }}>{track.artist}</div>
-            </div>
-          ))}
+          
+          <div 
+            className="walrus-panel-scroll"
+            style={{
+              maxHeight: '320px',
+              overflow: 'auto',
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(255,255,255,0.3) transparent'
+            }}>
+            {walrusTracks.map((track, index) => (
+              <div key={track.walrus_blob_id} style={{
+                fontSize: '12px',
+                padding: '8px 10px',
+                margin: '4px 0',
+                background: 'rgba(255, 255, 255, 0.1)',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                color: '#fff',
+                transition: 'all 0.2s ease',
+                border: '1px solid rgba(255, 255, 255, 0.2)'
+              }}
+              onClick={() => handleSearch(track.title)}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.2)';
+                e.currentTarget.style.transform = 'translateX(4px)';
+                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                e.currentTarget.style.transform = 'translateX(0)';
+                e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+              }}
+              >
+                <div style={{ fontWeight: 'bold', marginBottom: '2px' }}>{track.title}</div>
+                <div style={{ opacity: 0.8, fontSize: '10px' }}>{track.artist}</div>
+                <div style={{ opacity: 0.6, fontSize: '9px', marginTop: '2px' }}>Blob: {track.walrus_blob_id.slice(0, 8)}...</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
       {/* Local player mirrors the on-chain title list */}
       <AudioPlayer
         ref={playerRef}
-        playlist={PLAYLIST}
+        playlist={unifiedPlaylist}
         onTrackSelect={handleSearch}
         isWaiting={waiting}
         currentAccount={currentAccount}
