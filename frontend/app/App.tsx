@@ -58,6 +58,7 @@ export default function App() {
   const [waiting, setWaiting] = useState(false);
   const [uiMsg, setUiMsg] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [lastTrackChangeTime, setLastTrackChangeTime] = useState<number>(Date.now());
 
   // 🔓 Connect modal control + "retry after connect" memory
   const [showConnect, setShowConnect] = useState(false);
@@ -84,6 +85,9 @@ export default function App() {
     const title = fields?.current_track;
     if (title && playerRef.current) {
       playerRef.current.playByTitle(title);
+      // Clear chat messages when track changes and update timestamp
+      setChatMessages([]);
+      setLastTrackChangeTime(Date.now());
     }
   }, [fields?.current_track]);
 
@@ -144,7 +148,7 @@ export default function App() {
     }
   };
 
-  // Fetch chat messages from blockchain events
+  // Fetch chat messages from blockchain events (only since last track change)
   const fetchChatMessages = useCallback(async (): Promise<ChatMessage[]> => {
     try {
       if (!jukeboxPackageId) return [];
@@ -171,36 +175,29 @@ export default function App() {
         };
       });
 
-      // Sort by timestamp (newest first) and limit to 10
+      // Filter messages since last track change, sort by timestamp (oldest first, newest at bottom) and limit to 10
       return messages
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, 10);
+        .filter(msg => msg.timestamp >= lastTrackChangeTime)
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .slice(-10); // Get last 10 messages
 
     } catch (error) {
       console.warn('Failed to fetch chat messages:', error);
       return [];
     }
-  }, [suiClient, jukeboxPackageId]);
+  }, [suiClient, jukeboxPackageId, lastTrackChangeTime]);
 
   // Chat message handler (micro-transaction with event)
   const handleChatMessage = async (message: string) => {
     try {
       setUiMsg(null);
-      setWaiting(true);
 
       const tx = new Transaction();
 
       // Set an explicit gas budget
       tx.setGasBudget(GAS_BUDGET_MIST);
 
-      // 💬 Split a small fee for chat messages (0.001 SUI)
-      const CHAT_FEE_MIST = 1000000n; // 0.001 SUI
-      const [payment] = tx.splitCoins(tx.gas, [tx.pure.u64(CHAT_FEE_MIST)]);
-
-      // Send the chat fee to a burn address (or keep it simple and transfer to null address)
-      tx.transferObjects([payment], tx.pure.address('0x0000000000000000000000000000000000000000000000000000000000000000'));
-
-      // 📢 Call jukebox to emit a chat message event
+      // 📢 Call jukebox to emit a chat message event (no payment needed for chat)
       tx.moveCall({
         target: `${jukeboxPackageId}::jukebox::send_chat_message`,
         arguments: [
@@ -218,17 +215,14 @@ export default function App() {
             // Refresh chat messages after successful transaction
             const newMessages = await fetchChatMessages();
             setChatMessages(newMessages);
-            setWaiting(false);
           },
           onError: (err) => {
             console.error('Chat transaction failed:', err);
-            setWaiting(false);
             throw err; // Re-throw to be caught by AudioPlayer
           },
         },
       );
     } catch (e: any) {
-      setWaiting(false);
       throw e;
     }
   };

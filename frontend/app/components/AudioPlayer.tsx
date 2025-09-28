@@ -65,6 +65,7 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
   const [showVolume, setShowVolume] = useState(false);
   const [showWave, setShowWave] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [hasAutoStarted, setHasAutoStarted] = useState(false);
 
   // Chat states
   const [chatMessage, setChatMessage] = useState('');
@@ -482,6 +483,15 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
   // Keep last seen on-chain choice to detect changes.
   const lastChainTrackRef = useRef<string | null>(null);
+
+  // Auto-start effect: play the first track when component mounts
+  useEffect(() => {
+    if (mounted && !hasAutoStarted && playlistRef.current.length > 0) {
+      setHasAutoStarted(true);
+      // Auto-start the first track
+      play(0);
+    }
+  }, [mounted, hasAutoStarted, play]);
 
   useEffect(() => {
     let cancelled = false;
