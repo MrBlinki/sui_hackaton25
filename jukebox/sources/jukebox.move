@@ -104,7 +104,7 @@ module jukebox::jukebox {
 		};
 
 		// --- Send half of payment to artist of the track ---
-		let artist_share = split(&mut payment, paid / 2, ctx);
+		let artist_share = split(&mut payment, jukebox.fee / 2, ctx);
 		transfer::public_transfer(artist_share, track_artist);
 		// --- Send other half to owner of jukebox ---
 		transfer::public_transfer(payment, jukebox.owner);
