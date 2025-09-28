@@ -12,6 +12,7 @@ import {
 import { Transaction } from "@mysten/sui/transactions";
 
 import AudioPlayer, { AudioPlayerHandle } from "@/components/AudioPlayer";
+import TrackUpload from "@/components/TrackUpload";
 import { useNetworkVariable } from "./networkConfig";
 
 // Local playlist used by the AudioPlayer (titles must match on-chain values)
@@ -28,6 +29,16 @@ interface ChatMessage {
   address: string;
   message: string;
   timestamp: number;
+}
+
+// Walrus track type
+interface WalrusTrack {
+  title: string;
+  artist: string;
+  walrus_blob_id: string;
+  uploader: string;
+  upload_timestamp: number;
+  file_size: number;
 }
 
 // ---- Types & helpers to read your Move object ----
@@ -60,6 +71,11 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [lastTrackChangeTime, setLastTrackChangeTime] = useState<number>(Date.now());
 
+  // 🎵 Track management states
+  const [showUpload, setShowUpload] = useState(false);
+  const [uploadingTrack, setUploadingTrack] = useState(false);
+  const [walrusTracks, setWalrusTracks] = useState<WalrusTrack[]>([]);
+
   // 🔓 Connect modal control + "retry after connect" memory
   const [showConnect, setShowConnect] = useState(false);
   const [pendingQuery, setPendingQuery] = useState<string | null>(null);
@@ -84,12 +100,22 @@ export default function App() {
   useEffect(() => {
     const title = fields?.current_track;
     if (title && playerRef.current) {
-      playerRef.current.playByTitle(title);
+      // Check if this is a Walrus track
+      const walrusTrack = walrusTracks.find(track => track.title === title);
+
+      if (walrusTrack) {
+        // It's a Walrus track - pass the blob ID to the player
+        playerRef.current.playWalrusTrack(title, walrusTrack.walrus_blob_id);
+      } else {
+        // It's a local track - use existing logic
+        playerRef.current.playByTitle(title);
+      }
+
       // Clear chat messages when track changes and update timestamp
       setChatMessages([]);
       setLastTrackChangeTime(Date.now());
     }
-  }, [fields?.current_track]);
+  }, [fields?.current_track, walrusTracks]);
 
   // After the user connects, if we had a pending search, run it once.
   useEffect(() => {
@@ -187,6 +213,45 @@ export default function App() {
     }
   }, [suiClient, jukeboxPackageId, lastTrackChangeTime]);
 
+  // Fetch Walrus tracks from blockchain events
+  const fetchWalrusTracks = useCallback(async (): Promise<void> => {
+    try {
+      if (!jukeboxPackageId) return;
+
+      // Query for track added events
+      const response = await suiClient.queryEvents({
+        query: {
+          MoveEventType: `${jukeboxPackageId}::jukebox::TrackAddedEvent`
+        },
+        limit: 50,
+        order: 'descending'
+      });
+
+      const tracks: WalrusTrack[] = response.data.map((event: any) => {
+        const eventData = event.parsedJson;
+        return {
+          title: eventData.title,
+          artist: eventData.artist,
+          walrus_blob_id: eventData.walrus_blob_id,
+          uploader: eventData.uploader,
+          upload_timestamp: eventData.timestamp,
+          file_size: 0, // Not available in event, would need to query chain
+        };
+      });
+
+      setWalrusTracks(tracks);
+      console.log('📡 Fetched Walrus tracks:', tracks.length);
+
+    } catch (error) {
+      console.warn('Failed to fetch Walrus tracks:', error);
+    }
+  }, [suiClient, jukeboxPackageId]);
+
+  // Load Walrus tracks on component mount
+  useEffect(() => {
+    void fetchWalrusTracks();
+  }, [fetchWalrusTracks]);
+
   // Chat message handler (micro-transaction with event)
   const handleChatMessage = async (message: string) => {
     try {
@@ -252,6 +317,74 @@ export default function App() {
     await doChangeTrack(newTitle);
   };
 
+  // Add track to blockchain after Walrus upload
+  const addTrackToJukebox = async (blobId: string, metadata: any) => {
+    try {
+      setUploadingTrack(true);
+      setUiMsg(null);
+
+      const tx = new Transaction();
+      tx.setGasBudget(GAS_BUDGET_MIST);
+
+      // Call add_track function
+      tx.moveCall({
+        target: `${jukeboxPackageId}::jukebox::add_track`,
+        arguments: [
+          tx.object(jukeboxObjectId),      // &mut Jukebox
+          tx.pure.string(metadata.title),  // title: String
+          tx.pure.string(metadata.artist), // artist: String
+          tx.pure.string(blobId),          // walrus_blob_id: String
+          tx.pure.u64(metadata.fileSize),  // file_size: u64
+        ],
+      });
+
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: async ({ digest }) => {
+            await suiClient.waitForTransaction({ digest });
+            console.log(`🎵 Track added to jukebox: ${digest}`);
+            setUiMsg(`✅ Track "${metadata.title}" added successfully!`);
+
+            // Refresh track list
+            await fetchWalrusTracks();
+            setUploadingTrack(false);
+            setShowUpload(false);
+          },
+          onError: (err) => {
+            console.error('Add track transaction failed:', err);
+            setUiMsg(`❌ Failed to add track: ${err.message || 'Unknown error'}`);
+            setUploadingTrack(false);
+          },
+        },
+      );
+    } catch (e: any) {
+      console.error('Error adding track to jukebox:', e);
+      setUiMsg(`❌ Error: ${e.message || 'Unknown error'}`);
+      setUploadingTrack(false);
+    }
+  };
+
+  // Handle successful Walrus upload
+  const handleUploadSuccess = async (blobId: string, metadata: any) => {
+    console.log('🎵 Walrus upload successful:', { blobId, metadata });
+
+    if (!currentAccount) {
+      setUiMsg('❌ Please connect your wallet to add track to jukebox');
+      return;
+    }
+
+    // Add to blockchain
+    await addTrackToJukebox(blobId, metadata);
+  };
+
+  // Handle upload error
+  const handleUploadError = (error: string) => {
+    console.error('❌ Upload error:', error);
+    setUiMsg(`❌ Upload failed: ${error}`);
+    setUploadingTrack(false);
+  };
+
   // ====== CHAT MESSAGES POLLING ======
   useEffect(() => {
     let cancelled = false;
@@ -288,6 +421,86 @@ export default function App() {
           On-chain current track: <b>{fields.current_track}</b>
         </div>
       )} */}
+
+      {/* Upload button */}
+      {currentAccount && (
+        <div style={{
+          position: 'absolute',
+          bottom: '120px',
+          right: '20px',
+          zIndex: 1000
+        }}>
+          <div
+            onClick={() => setShowUpload(!showUpload)}
+            className="audio-player__btn audio-player__upload-btn"
+          />
+        </div>
+      )}
+
+      {/* Upload modal */}
+      {showUpload && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.8)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 2000,
+          backdropFilter: 'blur(10px)'
+        }}>
+          <div style={{
+            maxWidth: '500px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflow: 'auto'
+          }}>
+            <TrackUpload
+              onUploadSuccess={handleUploadSuccess}
+              onUploadError={handleUploadError}
+              isUploading={uploadingTrack}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Walrus tracks list */}
+      {walrusTracks.length > 0 && (
+        <div style={{
+          position: 'absolute',
+          bottom: '280px',
+          left: '10px',
+          background: 'rgba(255, 255, 255, 0.1)',
+          borderRadius: '8px',
+          padding: '12px',
+          maxWidth: '300px',
+          maxHeight: '200px',
+          overflow: 'auto',
+          backdropFilter: 'blur(10px)',
+          border: '1px solid rgba(255, 255, 255, 0.2)',
+          zIndex: 1000
+        }}>
+          <h4 style={{ margin: '0 0 8px 0', fontSize: '12px', fontWeight: 'bold', color: '#fff' }}>
+            🌊 Walrus Tracks ({walrusTracks.length})
+          </h4>
+          {walrusTracks.slice(0, 5).map((track, index) => (
+            <div key={track.walrus_blob_id} style={{
+              fontSize: '11px',
+              padding: '4px 6px',
+              margin: '2px 0',
+              background: 'rgba(255, 255, 255, 0.1)',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              color: '#fff'
+            }}
+            onClick={() => handleSearch(track.title)}
+            >
+              <div style={{ fontWeight: 'bold' }}>{track.title}</div>
+              <div style={{ opacity: 0.7 }}>{track.artist}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Local player mirrors the on-chain title list */}
       <AudioPlayer

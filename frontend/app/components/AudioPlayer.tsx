@@ -8,13 +8,17 @@ import { Howl, Howler } from 'howler';
 import dynamic from 'next/dynamic';
 import { parseBlob } from 'music-metadata';
 import './AudioPlayer.css';
+import { trackCache } from '@/lib/trackCache';
+import { getWalrusStreamUrl } from '@/lib/walrus';
 
 const SiriWave = dynamic(() => import('./SiriWave'), { ssr: false });
 
 interface Song {
   title: string;
-  file: string;   // without extension, e.g. "horizon" -> /audio/horizon.mp3
+  file: string;   // without extension, e.g. "horizon" -> /audio/horizon.mp3 OR walrus blob ID
   howl?: Howl;
+  isWalrus?: boolean; // true if this is a Walrus track
+  walrusBlobId?: string; // Walrus blob ID for decentralized tracks
 }
 
 interface TrackMeta {
@@ -43,6 +47,7 @@ interface AudioPlayerProps {
 // Methods the parent can call via ref
 export type AudioPlayerHandle = {
   playByTitle: (title: string) => void;
+  playWalrusTrack: (title: string, blobId: string) => void;
 };
 
 const defaultPlaylist: Song[] = [
@@ -252,34 +257,80 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
 
     if (!sound) {
       setIsLoading(true);
-      sound = data.howl = new Howl({
-        src: [`/audio/${data.file}.mp3`],
-        onplay: () => {
-          setDuration(formatTime(Math.round(sound!.duration())));
-          setIsPlaying(true);
-          setIsLoading(false);
-          setShowWave(true);
-          startTimer();
-        },
-        onload: () => {
-          setIsLoading(false);
-          setShowWave(true);
-          setDuration(formatTime(Math.round(sound!.duration())));
-        },
-        onend: () => {
-          setIsPlaying(false);
-          setShowWave(false);
-          stopTimer();
-          resetTimer();
-          skip('next');
-        },
-        onstop: () => {
-          setIsPlaying(false);
-          setShowWave(false);
-          stopTimer();
-          resetTimer();
-        }
-      });
+
+      // Handle Walrus tracks
+      if (data.isWalrus && data.walrusBlobId) {
+        console.log('🌊 Loading Walrus track:', data.title, data.walrusBlobId);
+
+        // Use direct Walrus stream URL (faster than caching for jukebox use case)
+        const walrusUrl = getWalrusStreamUrl(data.walrusBlobId);
+
+        sound = data.howl = new Howl({
+          src: [walrusUrl],
+          format: ['mp3', 'wav', 'ogg', 'm4a'], // Support multiple formats
+          onplay: () => {
+            setDuration(formatTime(Math.round(sound!.duration())));
+            setIsPlaying(true);
+            setIsLoading(false);
+            setShowWave(true);
+            startTimer();
+          },
+          onload: () => {
+            setIsLoading(false);
+            setShowWave(true);
+            setDuration(formatTime(Math.round(sound!.duration())));
+            console.log('✅ Walrus track loaded:', data.title);
+          },
+          onloaderror: (id, error) => {
+            console.error('❌ Failed to load Walrus track:', error);
+            setIsLoading(false);
+          },
+          onend: () => {
+            setIsPlaying(false);
+            setShowWave(false);
+            stopTimer();
+            resetTimer();
+            skip('next');
+          },
+          onstop: () => {
+            setIsPlaying(false);
+            setShowWave(false);
+            stopTimer();
+            resetTimer();
+          }
+        });
+
+      } else {
+        // Handle local tracks (existing logic)
+        sound = data.howl = new Howl({
+          src: [`/audio/${data.file}.mp3`],
+          onplay: () => {
+            setDuration(formatTime(Math.round(sound!.duration())));
+            setIsPlaying(true);
+            setIsLoading(false);
+            setShowWave(true);
+            startTimer();
+          },
+          onload: () => {
+            setIsLoading(false);
+            setShowWave(true);
+            setDuration(formatTime(Math.round(sound!.duration())));
+          },
+          onend: () => {
+            setIsPlaying(false);
+            setShowWave(false);
+            stopTimer();
+            resetTimer();
+            skip('next');
+          },
+          onstop: () => {
+            setIsPlaying(false);
+            setShowWave(false);
+            stopTimer();
+            resetTimer();
+          }
+        });
+      }
     }
 
     // Jukebox mode: only play, no pause
@@ -405,7 +456,33 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
     }
   }, [skipTo]);
 
-  useImperativeHandle(ref, () => ({ playByTitle }), [playByTitle]);
+  // ---- playWalrusTrack (exposed to parent) ----
+  const playWalrusTrack = useCallback(async (title: string, blobId: string) => {
+    console.log('🌊 Playing Walrus track:', title, blobId);
+
+    // Create a temporary Walrus track in the playlist
+    const walrusTrack: Song = {
+      title,
+      file: blobId, // Use blob ID as file identifier
+      isWalrus: true,
+      walrusBlobId: blobId,
+    };
+
+    // Add or update the track in the playlist
+    const existingIndex = playlistRef.current.findIndex(song => song.title === title);
+    if (existingIndex !== -1) {
+      // Update existing track to be Walrus-enabled
+      playlistRef.current[existingIndex] = { ...playlistRef.current[existingIndex], ...walrusTrack };
+      skipTo(existingIndex);
+    } else {
+      // Add new track temporarily
+      playlistRef.current.push(walrusTrack);
+      const newIndex = playlistRef.current.length - 1;
+      skipTo(newIndex);
+    }
+  }, [skipTo]);
+
+  useImperativeHandle(ref, () => ({ playByTitle, playWalrusTrack }), [playByTitle, playWalrusTrack]);
 
   const currentMeta: TrackMeta | undefined = currentSong ? metaByFile[currentSong.file] : undefined;
   const displayTitle = currentMeta?.title || currentSong?.title || '';
