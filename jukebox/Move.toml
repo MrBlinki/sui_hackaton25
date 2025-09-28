@@ -19,6 +19,8 @@ edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
 
 [addresses]
 jukebox = "0x0"
+artist = "0x324dbf578e3f85ea53b31f1ee32cc6aeb95b8f2d0028a8e0d1d3cf42c86f4cf2"
+blob = "n3BKzEC2oBH5vf22mj4bYQurNJjc_cT6p-gMTEMvyYs"
 
 # Named addresses will be accessible in Move as `@name`. They're also exported:
 # for example, `std = "0x1"` is exported by the Standard Library.

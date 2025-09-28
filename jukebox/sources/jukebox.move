@@ -18,6 +18,7 @@ module jukebox::jukebox {
 
 	// --- Data types ---
 	use std::string::String;
+	use walrus::blob::Blob;
 
 	// --- Error codes ---
 	const E_INSUFFICIENT_PAYMENT: u64 = 1;
@@ -31,6 +32,26 @@ module jukebox::jukebox {
 		fee: u64,
 		last_buyer: address,
 		current_track: String,
+		collection: vector<Track>,
+	}
+
+	public struct Track has key, store, copy {
+		id: UID,
+		artist: address,
+		blob: Blob,
+	}
+
+	fun initCollection(ctx: &mut TxContext) : vector<Track> {
+		let collection = vector<Track>;
+
+		let track = Track {
+			id: object::new(ctx),
+			artist: @artist,
+			blob: @blob,
+		};
+		collection.push_back(track);
+
+		collection
 	}
 
 	fun init(ctx: &mut TxContext) {
@@ -41,6 +62,7 @@ module jukebox::jukebox {
 				fee: ONE_SUI,
 				last_buyer: ctx.sender(),
 				current_track: b"Silence".to_string(),
+				collection: initCollection(),
 			}	
 		)
 	}
