@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
 
-// Configuration pour se connecter à SUI (devnet pour correspondre aux IDs)
-const suiClient = new SuiClient({ url: getFullnodeUrl('devnet') });
+// Configuration pour se connecter à SUI (testnet pour correspondre aux IDs)
+const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
 
-import { DEVNET_JUKEBOX_OBJECT_ID } from '@/constants';
+import { TESTNET_JUKEBOX_OBJECT_ID } from '@/constants';
 
 // Utilise l'ID du réseau devnet par défaut
 // En production, on devrait détecter le réseau actuel
-const JUKEBOX_OBJECT_ID = process.env.NEXT_PUBLIC_JUKEBOX_OBJECT_ID || DEVNET_JUKEBOX_OBJECT_ID;
+const JUKEBOX_OBJECT_ID = process.env.NEXT_PUBLIC_JUKEBOX_OBJECT_ID || TESTNET_JUKEBOX_OBJECT_ID;
 
 export async function GET() {
   try {
