@@ -425,14 +425,15 @@ export default function App() {
       {/* Upload button */}
       {currentAccount && (
         <div style={{
-          position: 'absolute',
-          bottom: '120px',
-          right: '20px',
+          position: 'fixed',
+          bottom: '135px',
+          right: '3%',
           zIndex: 1000
         }}>
           <div
             onClick={() => setShowUpload(!showUpload)}
             className="audio-player__btn audio-player__upload-btn"
+            title="Upload new track to Walrus"
           />
         </div>
       )}
