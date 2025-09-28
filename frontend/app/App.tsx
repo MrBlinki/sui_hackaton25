@@ -10,9 +10,9 @@ import {
   useSuiClientQuery,
 } from "@mysten/dapp-kit";
 import { Transaction } from "@mysten/sui/transactions";
+import Link from "next/link";
 
 import AudioPlayer, { AudioPlayerHandle } from "@/components/AudioPlayer";
-import AddTrackForm from "@/components/AddTrackForm";
 import { useNetworkVariable } from "./networkConfig";
 
 // Type pour les tracks de la playlist
@@ -53,11 +53,9 @@ export default function App() {
   const [showConnect, setShowConnect] = useState(false);
   const [pendingQuery, setPendingQuery] = useState<string | null>(null);
 
-  // Add track form modal control
-  const [showAddTrackForm, setShowAddTrackForm] = useState(false);
-
-  // Playlist state - démarre vide, les tracks sont ajoutées via AddTrackForm
+  // Playlist state - initialisée avec les fichiers du dossier audio
   const [playlist, setPlaylist] = useState<PlaylistTrack[]>([]);
+  const [playlistInitialized, setPlaylistInitialized] = useState(false);
 
   // Guard against missing object ID in the query
   const canQueryObject = Boolean(jukeboxObjectId);
@@ -164,56 +162,68 @@ export default function App() {
     await doChangeTrack(newTitle);
   };
 
-  // Function to add a new track to the playlist
-  const handleAddTrack = (title: string, file: string) => {
-    setPlaylist(prevPlaylist => [
-      ...prevPlaylist,
-      { title, file }
-    ]);
-  };
+  // Initialize playlist with audio files from public/audio directory
+  useEffect(() => {
+    const initializePlaylist = async () => {
+      if (playlistInitialized) return;
+      
+      try {
+        const response = await fetch('/api/audio-files');
+        const data = await response.json();
+        
+        if (data.files && data.files.length > 0) {
+          const initialPlaylist: PlaylistTrack[] = data.files.map((file: any) => ({
+            title: file.title,
+            file: file.file
+          }));
+          
+          setPlaylist(initialPlaylist);
+          console.log('Playlist initialized with', initialPlaylist.length, 'tracks');
+        }
+        
+        setPlaylistInitialized(true);
+      } catch (error) {
+        console.error('Error initializing playlist:', error);
+        setPlaylistInitialized(true);
+      }
+    };
+
+    initializePlaylist();
+  }, [playlistInitialized]);
+
+
 
   return (
     <div className="bg-white text-black">
-      {isPending && <div className="text-sm text-muted-foreground">Loading…</div>}
-      {error && <div className="text-sm text-red-600">Error: {error.message}</div>}
-      {uiMsg && <div className="text-sm">{uiMsg}</div>}
-
-      {/* {fields?.current_track && (
-        <div className="text-sm">
-          On-chain current track: <b>{fields.current_track}</b>
+      {/* Affichage du loader pendant l'initialisation */}
+      {!playlistInitialized && (
+        <div className="flex items-center justify-center min-h-screen">
+          <div className="text-center">
+            <div className="text-sm text-muted-foreground mb-4">Chargement de la playlist...</div>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 mx-auto"></div>
+          </div>
         </div>
-      )} */}
+      )}
 
-      {/* Add Track button */}
-      <div className="mb-4 flex justify-center">
-        <button
-          onClick={() => setShowAddTrackForm(true)}
-          className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
-          disabled={waiting}
-        >
-          + Add New Track
-        </button>
-      </div>
+      {/* Messages d'état (seulement quand initialisé) */}
+      {playlistInitialized && (
+        <>
+          {isPending && <div className="text-sm text-muted-foreground">Loading…</div>}
+          {error && <div className="text-sm text-red-600">Error: {error.message}</div>}
+          {uiMsg && <div className="text-sm">{uiMsg}</div>}
+        </>
+      )}
 
       {/* Local player mirrors the on-chain title list */}
-      <AudioPlayer
-        ref={playerRef}
-        playlist={playlist}
-        onTrackSelect={handleSearch}
-        isWaiting={waiting}
-      />
-
-      {/* Add Track Form Modal */}
-      <AddTrackForm
-        isOpen={showAddTrackForm}
-        onClose={() => setShowAddTrackForm(false)}
-        onSuccess={(title: string, file: string) => {
-          // Add the track to the local playlist
-          handleAddTrack(title, file);
-          // Refetch the jukebox data to update the track list
-          refetch();
-        }}
-      />
+      {playlistInitialized && (
+        <AudioPlayer
+          ref={playerRef}
+          playlist={playlist}
+          onTrackSelect={handleSearch}
+          isWaiting={waiting}
+          isArtistMode={false}
+        />
+      )}
 
       {/* Wallet connect modal; lives anywhere under WalletProvider */}
       <ConnectModal

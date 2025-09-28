@@ -28,6 +28,7 @@ interface AudioPlayerProps {
   playlist?: Song[];
   onTrackSelect?: (title: string) => void;
   isWaiting?: boolean;
+  isArtistMode?: boolean;
 }
 
 // Methods the parent can call via ref
@@ -38,7 +39,7 @@ export type AudioPlayerHandle = {
 const defaultPlaylist: Song[] = [];
 
 const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
-({ playlist = defaultPlaylist, onTrackSelect, isWaiting = false }, ref) => {
+({ playlist = defaultPlaylist, onTrackSelect, isWaiting = false, isArtistMode = false }, ref) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -475,7 +476,11 @@ const AudioPlayer = forwardRef<AudioPlayerHandle, AudioPlayerProps>(
         <div className="audio-player__empty">
           <div className="audio-player__empty-message">
             <h3>Playlist vide</h3>
-            <p>Ajoutez des pistes avec le bouton "+ Add New Track" pour commencer à écouter de la musique.</p>
+            {isArtistMode ? (
+              <p>Ajoutez des pistes avec le bouton "+ Add New Track" pour commencer à écouter de la musique.</p>
+            ) : (
+              <p>Aucune piste disponible pour le moment. Attendez qu'un artiste ajoute de la musique au jukebox.</p>
+            )}
           </div>
         </div>
       </div>
